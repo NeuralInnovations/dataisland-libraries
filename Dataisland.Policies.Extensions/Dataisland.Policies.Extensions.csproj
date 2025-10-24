@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Dataisland.Users.Policies</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Dataisland.Organizations\Dataisland.Organizations.csproj" />
+      <ProjectReference Include="..\Dataisland.Policies\Dataisland.Policies.csproj" />
+    </ItemGroup>
+
+</Project>

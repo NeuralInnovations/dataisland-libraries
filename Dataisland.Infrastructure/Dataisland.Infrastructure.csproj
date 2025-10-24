@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Dataisland.Infrastructure</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Pulumi" Version="3.84.0" />
+        <PackageReference Include="Pulumi.Aws" Version="6.83.0" />
+        <PackageReference Include="Pulumi.Command" Version="1.1.0" />
+        <PackageReference Include="Pulumi.Docker" Version="4.8.0" />
+        <PackageReference Include="Pulumi.Github" Version="6.7.2" />
+        <PackageReference Include="Pulumi.HCloud" Version="1.23.0" />
+        <PackageReference Include="Pulumi.Kubernetes" Version="4.23.0" />
+        <PackageReference Include="Pulumiverse.Time" Version="0.1.1" />
+    </ItemGroup>
+</Project>

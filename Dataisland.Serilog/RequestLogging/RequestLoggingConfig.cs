@@ -9,6 +9,7 @@ public sealed class RequestLoggingConfig
 public sealed class PathLevelRule
 {
     public string? Path { get; set; }
+    public string? Method { get; set; }
     public string? Level { get; set; }
     public bool PrefixMatch { get; set; } = true;
 }

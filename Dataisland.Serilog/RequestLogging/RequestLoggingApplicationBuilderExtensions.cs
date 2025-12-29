@@ -20,9 +20,10 @@ public static class RequestLoggingApplicationBuilderExtensions
         Log.Information("[Serilog.RequestLogging] Applying config: DefaultLevel={DefaultLevel}, PathRules={RulesCount}", cfg.DefaultLevel, cfg.PathLevels.Count);
 
         var parsedRules = cfg.PathLevels
-            .Where(r => !string.IsNullOrWhiteSpace(r.Path))
+            .Where(r => !string.IsNullOrWhiteSpace(r.Path) || !string.IsNullOrWhiteSpace(r.Method))
             .Select(r => new ParsedRule(
-                r.Path!,
+                r.Path,
+                r.Method,
                 r.PrefixMatch,
                 Enum.TryParse<LogEventLevel>(r.Level, true, out var lvl) ? lvl : LogEventLevel.Information))
             .ToList();
@@ -36,18 +37,31 @@ public static class RequestLoggingApplicationBuilderExtensions
             options.GetLevel = (httpContext, elapsed, ex) =>
             {
                 var path = httpContext.Request.Path;
+                var method = httpContext.Request.Method;
+                
                 foreach (var rule in parsedRules)
                 {
-                    if (rule.PrefixMatch)
+                    // Check method match if specified
+                    if (!string.IsNullOrWhiteSpace(rule.Method) && 
+                        !method.Equals(rule.Method, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    
+                    // Check path match if specified
+                    if (!string.IsNullOrWhiteSpace(rule.Path))
                     {
-                        if (path.StartsWithSegments(rule.Path, StringComparison.OrdinalIgnoreCase))
-                            return rule.Level;
+                        if (rule.PrefixMatch)
+                        {
+                            if (!path.StartsWithSegments(rule.Path, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
+                        else
+                        {
+                            if (!path.Equals(rule.Path, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
                     }
-                    else
-                    {
-                        if (path.Equals(rule.Path, StringComparison.OrdinalIgnoreCase))
-                            return rule.Level;
-                    }
+                    
+                    return rule.Level;
                 }
                 return defaultLevel;
             };
@@ -67,5 +81,5 @@ public static class RequestLoggingApplicationBuilderExtensions
         return app;
     }
 
-    private sealed record ParsedRule(string Path, bool PrefixMatch, LogEventLevel Level);
+    private sealed record ParsedRule(string? Path, string? Method, bool PrefixMatch, LogEventLevel Level);
 }

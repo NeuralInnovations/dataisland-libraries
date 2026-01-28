@@ -13,6 +13,7 @@ namespace Dataisland.MQ
 
         public string Queue { get; }
         public int PrefetchCount { get; set; } = 1;
+        public int ConcurrentMessageLimit { get; set; } = 0;
         public bool Durable { get; set; } = true;
         public bool AutoDelete { get; set; } = false;
         public int RetryCount { get; set; } = 3;

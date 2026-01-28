@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using MassTransit;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -27,6 +27,8 @@ namespace Dataisland.MQ
                     cfg.ReceiveEndpoint(attribute.Queue, e =>
                     {
                         e.PrefetchCount = attribute.PrefetchCount;
+                        if (attribute.ConcurrentMessageLimit > 0)
+                            e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
                         e.UseMessageRetry(a =>
@@ -49,7 +51,7 @@ namespace Dataisland.MQ
                             TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds)
                         )
                     );
-                });
+                }).ExcludeFromConfigureEndpoints();
                 _maps.Add(typeof(T), attribute);
             }
             else

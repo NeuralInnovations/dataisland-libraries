@@ -26,6 +26,7 @@ namespace Dataisland.MQ
                 {
                     cfg.ReceiveEndpoint(attribute.Queue, e =>
                     {
+                        e.ConfigureConsumeTopology = true;
                         e.PrefetchCount = attribute.PrefetchCount;
                         if (attribute.ConcurrentMessageLimit > 0)
                             e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;

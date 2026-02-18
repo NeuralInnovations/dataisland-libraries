@@ -32,9 +32,10 @@ namespace Dataisland.MQ
                             e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
-                        e.UseMessageRetry(a =>
-                            a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
-                        );
+                        if (attribute.RetryCount > 0)
+                            e.UseMessageRetry(a =>
+                                a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
+                            );
                         if (attribute.ConsumerTimeoutInSeconds > 0)
                             e.UseTimeout(t => t.Timeout = TimeSpan.FromSeconds(attribute.ConsumerTimeoutInSeconds));
                         e.ConfigureConsumer(ctx, pair.Key);
@@ -47,14 +48,16 @@ namespace Dataisland.MQ
         {
             if (typeof(T).GetCustomAttribute(typeof(MqAttribute)) is MqAttribute attribute)
             {
-                configurator.AddConsumer<T>(c =>
+                var consumerDef = configurator.AddConsumer<T>(c =>
                 {
-                    c.UseMessageRetry(a =>
-                        a.Interval(attribute.RetryCount,
-                            TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds)
-                        )
-                    );
-                }).ExcludeFromConfigureEndpoints();
+                    if (attribute.RetryCount > 0)
+                        c.UseMessageRetry(a =>
+                            a.Interval(attribute.RetryCount,
+                                TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds)
+                            )
+                        );
+                });
+                consumerDef.ExcludeFromConfigureEndpoints();
                 _maps.Add(typeof(T), attribute);
             }
             else

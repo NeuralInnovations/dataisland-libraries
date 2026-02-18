@@ -1,0 +1,66 @@
+using Dataisland.Core.Domain.Entities;
+using Dataisland.MongoDB;
+using MongoDB.Bson;
+using MongoDB.Driver;
+
+namespace Dataisland.Core.Repositories;
+
+public interface IOrganizationRepository : IRepository
+{
+    Task<Organization?> GetByIdAsync(string id);
+    Task<List<Organization>> GetByIdsAsync(IEnumerable<string> ids);
+    Task<Organization?> GetByMemberIdAsync(ObjectId userId);
+    Task<List<Organization>> GetByMemberIdAllAsync(ObjectId userId);
+    Task<PaginatedResult<Organization>> GetByMemberIdAllPaginatedAsync(ObjectId userId, PaginationQuery pagination);
+    Task<Organization> CreateAsync(Organization org);
+    Task UpdateAsync(Organization org);
+    Task SoftDeleteAsync(string id);
+}
+
+public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrganizationRepository
+{
+    public OrganizationRepository(IMongoDBProvider provider)
+        : base("organizations", provider, new OrganizationIndexes()) { }
+
+    public async Task<Organization?> GetByIdAsync(string id) =>
+        await Collection.Find(x => x.Id == id).FirstOrDefaultAsync();
+
+    public async Task<List<Organization>> GetByIdsAsync(IEnumerable<string> ids) =>
+        await Secondary.Find(x => ids.Contains(x.Id)).ToListAsync();
+
+    public async Task<Organization?> GetByMemberIdAsync(ObjectId userId) =>
+        await Collection.Find(x => x.MemberIds.Contains(userId)).FirstOrDefaultAsync();
+
+    public async Task<List<Organization>> GetByMemberIdAllAsync(ObjectId userId) =>
+        await Secondary.Find(x => x.MemberIds.Contains(userId)).ToListAsync();
+
+    public async Task<PaginatedResult<Organization>> GetByMemberIdAllPaginatedAsync(ObjectId userId, PaginationQuery pagination) =>
+        await Secondary.Find(x => x.MemberIds.Contains(userId)).ToPaginatedAsync(pagination);
+
+    public async Task<Organization> CreateAsync(Organization org)
+    {
+        await Collection.InsertOneAsync(org);
+        return org;
+    }
+
+    public async Task UpdateAsync(Organization org)
+    {
+        org.ModifiedAt = DateTime.UtcNow;
+        await Collection.ReplaceOneAsync(x => x.Id == org.Id, org);
+    }
+
+    public async Task SoftDeleteAsync(string id) =>
+        await Collection.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<Organization>.Update
+                .Set(x => x.Metadata.IsDeleted, true)
+                .Set(x => x.ModifiedAt, DateTime.UtcNow));
+}
+
+file class OrganizationIndexes : IndexesBuilder<Organization>
+{
+    public OrganizationIndexes()
+    {
+        Index(Ascending("memberIds"));
+    }
+}

@@ -1,6 +1,7 @@
 using System.Reflection;
 using MassTransit;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Dataisland.MQ
 {
@@ -32,11 +33,22 @@ namespace Dataisland.MQ
                             e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
+
+                        if (attribute.UseDelayedRedelivery && attribute.RedeliveryIntervalsSeconds.Length > 0)
+                        {
+                            e.UseDelayedRedelivery(r => r.Intervals(
+                                attribute.RedeliveryIntervalsSeconds.Select(s => TimeSpan.FromSeconds(s)).ToArray()
+                            ));
+                        }
+
                         e.UseMessageRetry(a =>
                             a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
                         );
                         if (attribute.ConsumerTimeoutInSeconds > 0)
                             e.UseTimeout(t => t.Timeout = TimeSpan.FromSeconds(attribute.ConsumerTimeoutInSeconds));
+
+                        e.UseInMemoryOutbox(ctx);
+
                         e.ConfigureConsumer(ctx, pair.Key);
                     });
                 }
@@ -86,9 +98,13 @@ namespace Dataisland.MQ
                         h.Password(options.Password);
                     });
 
+                    var loggerFactory = ctx.GetRequiredService<ILoggerFactory>();
+                    cfg.ConnectReceiveObserver(
+                        new ErrorQueueObserver(loggerFactory.CreateLogger<ErrorQueueObserver>()));
+
                     impl.Configure(ctx, cfg);
 
-                    cfg.ConfigureEndpoints(ctx);
+                    cfg.ConfigureEndpoints(ctx, new KebabCaseEndpointNameFormatter(false));
                 });
             });
             return services;

@@ -6,6 +6,8 @@ public static class RabbitMqOptionsExtensions
 {
     public static RabbitMqOptions GetRabbitMqOptions(this IConfiguration configuration, string section = "RabbitMq")
     {
-        return configuration.GetSection(section).Get<RabbitMqOptions>()!;
+        var options = configuration.GetSection(section).Get<RabbitMqOptions>()!;
+        options.ApplyConnectionString();
+        return options;
     }
 }

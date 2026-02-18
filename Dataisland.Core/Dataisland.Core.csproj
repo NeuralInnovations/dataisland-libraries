@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Dataisland.Core</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\Contracts\Dataisland.Contracts\Dataisland.Contracts.csproj" />
+        <ProjectReference Include="..\Dataisland.MongoDB\Dataisland.MongoDB.csproj" />
+        <ProjectReference Include="..\Dataisland.MongoDB.Entity\Dataisland.MongoDB.Entity.csproj" />
+    </ItemGroup>
+
+</Project>

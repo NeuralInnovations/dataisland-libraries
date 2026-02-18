@@ -1,21 +1,26 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net9.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <RootNamespace>Dataisland.MQ</RootNamespace>
+        <RootNamespace>Dataisland.LLM</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="MassTransit" Version="8.3.5" />
-        <PackageReference Include="MassTransit.RabbitMQ" Version="8.3.5" />
+        <PackageReference Include="Google.GenAI" Version="0.15.0" />
+        <PackageReference Include="OpenAI" Version="2.2.0-beta.4" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.6" />
         <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.6" />
         <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.6" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.6" />
-        <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="9.0.6" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.6" />
+        <PackageReference Include="Polly.Core" Version="8.5.2" />
         <PackageReference Include="prometheus-net" Version="8.2.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Dataisland.Tests.Unit" />
     </ItemGroup>
 
 </Project>

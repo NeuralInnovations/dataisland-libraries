@@ -48,15 +48,9 @@ namespace Dataisland.MQ
         {
             if (typeof(T).GetCustomAttribute(typeof(MqAttribute)) is MqAttribute attribute)
             {
-                var consumerDef = configurator.AddConsumer<T>(c =>
-                {
-                    if (attribute.RetryCount > 0)
-                        c.UseMessageRetry(a =>
-                            a.Interval(attribute.RetryCount,
-                                TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds)
-                            )
-                        );
-                });
+                // Retry is configured on the receive endpoint (Configure method), not here,
+                // to avoid compounding retries (endpoint × consumer = RetryCount²).
+                var consumerDef = configurator.AddConsumer<T>();
                 consumerDef.ExcludeFromConfigureEndpoints();
                 _maps.Add(typeof(T), attribute);
             }

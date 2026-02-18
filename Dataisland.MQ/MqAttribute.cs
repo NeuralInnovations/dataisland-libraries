@@ -18,5 +18,6 @@ namespace Dataisland.MQ
         public bool AutoDelete { get; set; } = false;
         public int RetryCount { get; set; } = 3;
         public float RetryIntervalInSeconds { get; set; } = 3;
+        public int ConsumerTimeoutInSeconds { get; set; } = 0;
     }
 }

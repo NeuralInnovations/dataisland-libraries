@@ -176,7 +176,7 @@ public class LlmService : ILlmService
         {
             provider = config.Provider.ToLowerInvariant() switch
             {
-                "openai" or "anthropic" => new OpenAiProvider(config, _loggerFactory.CreateLogger<OpenAiProvider>()),
+                "openai" or "anthropic" or "gpt" or "azure" => new OpenAiProvider(config, _loggerFactory.CreateLogger<OpenAiProvider>()),
                 "gemini" or "google" => new GeminiProvider(config, _loggerFactory.CreateLogger<GeminiProvider>()),
                 _ => throw new NotSupportedException($"LLM provider '{config.Provider}' not supported")
             };

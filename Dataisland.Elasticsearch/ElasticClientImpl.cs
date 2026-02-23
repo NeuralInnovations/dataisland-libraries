@@ -1,5 +1,3 @@
-using System.Net.Http.Headers;
-using System.Text;
 using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Core.Bulk;
 using Elastic.Clients.Elasticsearch.IndexManagement;
@@ -12,15 +10,15 @@ namespace Dataisland.Elasticsearch;
 public class ElasticClientImpl : IElasticClient
 {
     private readonly ElasticsearchClient _client;
-    private readonly ElasticsearchOptions _options;
     private readonly ILogger<ElasticClientImpl> _logger;
 
     public ElasticClientImpl(ElasticsearchOptions options, ILogger<ElasticClientImpl> logger)
     {
-        _options = options;
         _logger = logger;
 
-        var settings = new ElasticsearchClientSettings(new Uri(options.Url));
+        var uri = new Uri(options.Url);
+        var settings = new ElasticsearchClientSettings(uri)
+            .RequestTimeout(TimeSpan.FromSeconds(options.RequestTimeoutSeconds));
 
         if (!string.IsNullOrWhiteSpace(options.Username) && !string.IsNullOrWhiteSpace(options.Password))
         {
@@ -28,7 +26,28 @@ public class ElasticClientImpl : IElasticClient
                 new Elastic.Transport.BasicAuthentication(options.Username, options.Password));
         }
 
+        if (uri.Scheme == Uri.UriSchemeHttps)
+        {
+            if (!string.IsNullOrWhiteSpace(options.CertificateFingerprint))
+            {
+                settings = settings.CertificateFingerprint(options.CertificateFingerprint);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Elasticsearch URL uses HTTPS but no CertificateFingerprint is configured — " +
+                    "certificate validation is disabled. Set Elasticsearch:CertificateFingerprint in production");
+                settings = settings.ServerCertificateValidationCallback((_, _, _, _) => true);
+            }
+        }
+
         _client = new ElasticsearchClient(settings);
+    }
+
+    public async Task<bool> PingAsync(CancellationToken ct = default)
+    {
+        var response = await _client.PingAsync(ct);
+        return response.IsValidResponse;
     }
 
     private const string IlmPolicyName = "dataisland-default";
@@ -37,16 +56,6 @@ public class ElasticClientImpl : IElasticClient
     {
         try
         {
-            using var httpClient = new HttpClient();
-            var url = $"{_options.Url.TrimEnd('/')}/_ilm/policy/{IlmPolicyName}";
-
-            var request = new HttpRequestMessage(HttpMethod.Put, url);
-            if (!string.IsNullOrWhiteSpace(_options.Username) && !string.IsNullOrWhiteSpace(_options.Password))
-            {
-                var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_options.Username}:{_options.Password}"));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-            }
-
             const string policyJson = """
                 {
                     "policy": {
@@ -68,11 +77,15 @@ public class ElasticClientImpl : IElasticClient
                 }
                 """;
 
-            request.Content = new StringContent(policyJson, Encoding.UTF8, "application/json");
-            var response = await httpClient.SendAsync(request, ct);
+            var path = new Elastic.Transport.EndpointPath(
+                Elastic.Transport.HttpMethod.PUT, $"/_ilm/policy/{IlmPolicyName}");
+            var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
+                in path,
+                Elastic.Transport.PostData.String(policyJson),
+                null, null, ct);
 
-            if (!response.IsSuccessStatusCode)
-                _logger.LogWarning("Failed to create ILM policy: {Status}", response.StatusCode);
+            if (!response.ApiCallDetails.HasSuccessfulStatusCode)
+                _logger.LogWarning("Failed to create ILM policy: {Status}", response.ApiCallDetails.HttpStatusCode);
             else
                 _logger.LogInformation("ILM policy '{PolicyName}' ensured", IlmPolicyName);
         }

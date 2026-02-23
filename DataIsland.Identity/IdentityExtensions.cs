@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -8,17 +10,45 @@ public static class IdentityExtensions
     public static IServiceCollection AddDataIslandIdentity(
         this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddAuthentication()
-            .AddJwtBearer(options =>
+        var isDevEnvironment = configuration.GetValue<bool>("Service:IsDevEnvironment");
+        var debugSecret = configuration["DataIslandAuth:DebugSecret"];
+
+        var authBuilder = services.AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        });
+
+        authBuilder.AddJwtBearer(options =>
+        {
+            var authority = configuration["Identity:Authority"];
+            if (!string.IsNullOrEmpty(authority))
+                options.Authority = authority;
+
+            options.TokenValidationParameters.ValidateAudience = false;
+        });
+
+        if (isDevEnvironment && !string.IsNullOrEmpty(debugSecret))
+        {
+            authBuilder.AddScheme<AuthenticationSchemeOptions, DebugAuthHandler>(
+                DebugAuthHandler.SchemeName, _ => { });
+
+            services.AddSingleton(new DebugAuthSecret(debugSecret));
+
+            services.AddAuthorization(options =>
             {
-                var authority = configuration["Identity:Authority"];
-                if (!string.IsNullOrEmpty(authority))
-                    options.Authority = authority;
-
-                options.TokenValidationParameters.ValidateAudience = false;
+                options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    DebugAuthHandler.SchemeName)
+                    .RequireAuthenticatedUser()
+                    .Build();
             });
+        }
+        else
+        {
+            services.AddAuthorization();
+        }
 
-        services.AddAuthorization();
         return services;
     }
 
@@ -27,3 +57,5 @@ public static class IdentityExtensions
         return services;
     }
 }
+
+public record DebugAuthSecret(string Secret);

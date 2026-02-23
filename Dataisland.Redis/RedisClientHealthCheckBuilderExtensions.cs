@@ -7,6 +7,6 @@ public static class RedisClientHealthCheckBuilderExtensions
 {
     public static IHealthChecksBuilder AddRedis(this IHealthChecksBuilder builder)
     {
-        return builder.AddRedis(s => s.GetRequiredService<IConnectionMultiplexer>());
+        return builder.AddRedis(s => s.GetRequiredService<IRedisClient>().Connection);
     }
 }

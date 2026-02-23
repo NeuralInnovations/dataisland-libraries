@@ -136,10 +136,14 @@ public static class MongoDBRepositoryExtensions
         return services;
     }
 
-    public static IServiceCollection AddRepositories(this IServiceCollection services)
+    public static IServiceCollection AddRepositories(this IServiceCollection services, params System.Reflection.Assembly[] assemblies)
     {
         var repositoryBaseType = typeof(IRepository);
-        var types = AppDomain.CurrentDomain.GetAssemblies()
+        var source = assemblies.Length > 0
+            ? assemblies.AsEnumerable()
+            : AppDomain.CurrentDomain.GetAssemblies();
+
+        var types = source
             .SelectMany(assembly => assembly.GetTypes())
             .Where(type =>
                 type is { IsClass: true, IsAbstract: false, IsInterface: false }

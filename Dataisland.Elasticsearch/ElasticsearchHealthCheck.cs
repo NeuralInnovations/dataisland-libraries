@@ -1,27 +1,20 @@
-using Elastic.Clients.Elasticsearch;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Dataisland.Elasticsearch;
 
-public class ElasticsearchHealthCheck(ElasticsearchOptions options) : IHealthCheck
+public class ElasticsearchHealthCheck(IElasticClient client) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context, CancellationToken cancellationToken = default)
     {
         try
         {
-            var settings = new ElasticsearchClientSettings(new Uri(options.Url));
-            if (!string.IsNullOrWhiteSpace(options.Username) && !string.IsNullOrWhiteSpace(options.Password))
-                settings = settings.Authentication(
-                    new Elastic.Transport.BasicAuthentication(options.Username, options.Password));
+            var isAlive = await client.PingAsync(cancellationToken);
 
-            var client = new ElasticsearchClient(settings);
-            var response = await client.PingAsync(cancellationToken);
-
-            return response.IsValidResponse
+            return isAlive
                 ? HealthCheckResult.Healthy("Elasticsearch ping succeeded")
-                : HealthCheckResult.Unhealthy($"Elasticsearch ping failed: {response.ElasticsearchServerError?.Error?.Reason}");
+                : HealthCheckResult.Unhealthy("Elasticsearch ping failed");
         }
         catch (Exception ex)
         {
@@ -32,13 +25,12 @@ public class ElasticsearchHealthCheck(ElasticsearchOptions options) : IHealthChe
 
 public static class ElasticsearchHealthCheckExtensions
 {
-    public static IHealthChecksBuilder AddElasticsearch(
-        this IHealthChecksBuilder builder, ElasticsearchOptions options)
+    public static IHealthChecksBuilder AddElasticsearch(this IHealthChecksBuilder builder)
     {
         return builder.Add(new HealthCheckRegistration(
             "elasticsearch",
-            _ => new ElasticsearchHealthCheck(options),
-            failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy,
+            sp => new ElasticsearchHealthCheck(sp.GetRequiredService<IElasticClient>()),
+            failureStatus: HealthStatus.Unhealthy,
             tags: ["readiness"]));
     }
 }

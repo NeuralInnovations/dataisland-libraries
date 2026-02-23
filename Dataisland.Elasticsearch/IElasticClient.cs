@@ -2,6 +2,9 @@ namespace Dataisland.Elasticsearch;
 
 public interface IElasticClient
 {
+    // Connectivity
+    Task<bool> PingAsync(CancellationToken ct = default);
+
     // Lifecycle
     Task EnsureIlmPolicyAsync(CancellationToken ct = default);
 

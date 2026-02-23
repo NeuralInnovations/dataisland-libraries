@@ -8,6 +8,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+
+    <ItemGroup>
       <PackageReference Include="AspNetCore.HealthChecks.Prometheus.Metrics" Version="9.0.0" />
       <PackageReference Include="AspNetCore.HealthChecks.Publisher.Prometheus" Version="9.0.0" />
       <PackageReference Include="OpenTelemetry" Version="1.12.0" />

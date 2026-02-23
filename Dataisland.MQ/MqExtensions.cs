@@ -33,6 +33,10 @@ namespace Dataisland.MQ
                             e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
+                        if (attribute.RetryCount > 0)
+                            e.UseMessageRetry(a =>
+                                a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
+                            );
 
                         if (attribute.UseDelayedRedelivery && attribute.RedeliveryIntervalsSeconds.Length > 0)
                         {
@@ -59,14 +63,10 @@ namespace Dataisland.MQ
         {
             if (typeof(T).GetCustomAttribute(typeof(MqAttribute)) is MqAttribute attribute)
             {
-                configurator.AddConsumer<T>(c =>
-                {
-                    c.UseMessageRetry(a =>
-                        a.Interval(attribute.RetryCount,
-                            TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds)
-                        )
-                    );
-                }).ExcludeFromConfigureEndpoints();
+                // Retry is configured on the receive endpoint (Configure method), not here,
+                // to avoid compounding retries (endpoint × consumer = RetryCount²).
+                var consumerDef = configurator.AddConsumer<T>();
+                consumerDef.ExcludeFromConfigureEndpoints();
                 _maps.Add(typeof(T), attribute);
             }
             else

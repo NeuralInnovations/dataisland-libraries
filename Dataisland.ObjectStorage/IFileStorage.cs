@@ -1,4 +1,4 @@
-namespace Dataisland.MinIO;
+namespace Dataisland.ObjectStorage;
 
 public interface IFileStorage
 {

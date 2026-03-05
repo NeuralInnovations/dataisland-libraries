@@ -10,7 +10,7 @@ public static class IdentityExtensions
     public static IServiceCollection AddDataIslandIdentity(
         this IServiceCollection services, IConfiguration configuration)
     {
-        var isDevEnvironment = configuration.GetValue<bool>("Service:IsDevEnvironment");
+        var isDebugAuth = configuration.GetValue<bool>("Auth:Debug");
         var debugSecret = configuration["DataIslandAuth:DebugSecret"];
 
         var authBuilder = services.AddAuthentication(options =>
@@ -28,7 +28,7 @@ public static class IdentityExtensions
             options.TokenValidationParameters.ValidateAudience = false;
         });
 
-        if (isDevEnvironment && !string.IsNullOrEmpty(debugSecret))
+        if (isDebugAuth && !string.IsNullOrEmpty(debugSecret))
         {
             authBuilder.AddScheme<AuthenticationSchemeOptions, DebugAuthHandler>(
                 DebugAuthHandler.SchemeName, _ => { });

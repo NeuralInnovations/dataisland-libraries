@@ -17,7 +17,7 @@ namespace Dataisland.Metrics;
 /// </summary>
 public sealed class WorkerHealthCheckRegistry
 {
-    internal List<Action<IHealthChecksBuilder>> Configurators { get; } = [];
+    internal List<HealthCheckRegistration> Registrations { get; } = [];
 }
 
 public static class WorkerMetricsExtensions
@@ -64,7 +64,7 @@ public static class WorkerMetricsExtensions
 
         public IHealthChecksBuilder Add(HealthCheckRegistration registration)
         {
-            registry.Configurators.Add(b => b.Add(registration));
+            registry.Registrations.Add(registration);
             inner.Add(registration);
             return this;
         }
@@ -81,12 +81,21 @@ public static class WorkerMetricsExtensions
             builder.WebHost.UseUrls($"http://+:{port}");
             builder.Logging.ClearProviders();
 
-            // Copy health check registrations from the root host
+            // Copy health check registrations from the root host.
+            // Wrap factories to resolve dependencies from rootProvider, because
+            // the worker web host has its own DI container without app services.
             var registries = rootProvider.GetServices<WorkerHealthCheckRegistry>();
             var hcBuilder = builder.Services.AddHealthChecks();
             foreach (var reg in registries)
-            foreach (var configurator in reg.Configurators)
-                configurator(hcBuilder);
+            foreach (var registration in reg.Registrations)
+            {
+                var captured = registration;
+                hcBuilder.Add(new HealthCheckRegistration(
+                    captured.Name,
+                    _ => captured.Factory(rootProvider),
+                    captured.FailureStatus,
+                    captured.Tags));
+            }
 
             // If no health checks were registered, add a basic OK check
             hcBuilder.AddCheck("self", () => HealthCheckResult.Healthy("ok"));

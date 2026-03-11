@@ -116,6 +116,103 @@ public class LlmService : ILlmService
         }
     }
 
+    public async Task<LlmResponse<T>> CompleteAsync<T>(
+        ModelTier tier, IReadOnlyList<LlmMessage> messages,
+        string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
+        CancellationToken ct = default) where T : class
+    {
+        var config = GetConfig(tier);
+        var supportsJsonSchema = SupportsJsonSchema(config);
+        var schema = JsonSchemaGenerator.Generate<T>();
+        var typeName = typeof(T).Name;
+
+        // Enhance system prompt with JSON instruction
+        var enhancedSystemPrompt = systemPrompt ?? "";
+        if (!supportsJsonSchema)
+        {
+            // For providers without native schema support, instruct via prompt
+            enhancedSystemPrompt += $"\n\nYou MUST respond with valid JSON matching this schema:\n{schema}\nDo NOT include any text outside the JSON object.";
+        }
+
+        var provider = GetOrCreateProvider(config);
+        var request = new LlmRequest(
+            Model: config.Model,
+            Messages: messages,
+            Temperature: temperature ?? config.Temperature,
+            MaxTokens: maxTokens ?? config.MaxTokens,
+            SystemPrompt: enhancedSystemPrompt
+        )
+        {
+            ResponseFormat = supportsJsonSchema ? LlmResponseFormat.JsonSchema : LlmResponseFormat.Json,
+            JsonSchema = schema,
+            JsonSchemaName = typeName
+        };
+
+        var tierName = tier.ToString();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+
+            var response = await _circuitBreaker.ExecuteAsync(
+                async token => await provider.CompleteAsync(request, token),
+                timeoutCts.Token);
+
+            sw.Stop();
+            RecordMetrics(config, tierName, response, sw.Elapsed);
+
+            var parsed = JsonResponseParser.TryParse<T>(response.Content, _logger);
+
+            return new LlmResponse<T>(
+                Value: parsed,
+                RawContent: response.Content,
+                PromptTokens: response.PromptTokens,
+                CompletionTokens: response.CompletionTokens,
+                Model: response.Model);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            sw.Stop();
+            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "timeout").Inc();
+            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+
+            _logger.LogWarning("LLM call timed out after {Timeout}s for tier {Tier}, model {Model}",
+                config.TimeoutSeconds, tier, config.Model);
+
+            if (tier != ModelTier.Backup)
+                return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+
+            throw new TimeoutException($"LLM call timed out after {config.TimeoutSeconds}s (model: {config.Model})");
+        }
+        catch (BrokenCircuitException ex)
+        {
+            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
+            _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back", tier);
+
+            if (tier != ModelTier.Backup)
+                return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+
+            throw new ServiceUnavailableException("LLM", ex);
+        }
+        catch (Exception ex) when (tier != ModelTier.Backup)
+        {
+            sw.Stop();
+            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "error").Inc();
+            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+
+            _logger.LogWarning(ex, "LLM call failed for tier {Tier}, falling back to Backup", tier);
+            return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+        }
+    }
+
+    private static bool SupportsJsonSchema(ModelConfig config)
+    {
+        // OpenAI, Azure OpenAI, and Anthropic via OpenAI-compatible endpoints support structured outputs
+        return config.Provider.ToLowerInvariant() is "openai" or "azure" or "gpt" or "anthropic";
+    }
+
     public async IAsyncEnumerable<string> CompleteStreamingAsync(
         ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,

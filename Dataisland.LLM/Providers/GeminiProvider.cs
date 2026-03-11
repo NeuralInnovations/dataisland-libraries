@@ -76,6 +76,12 @@ public class GeminiProvider : ILlmProvider
             };
         }
 
+        // Set JSON response mode for structured output
+        if (request.ResponseFormat is LlmResponseFormat.Json or LlmResponseFormat.JsonSchema)
+        {
+            config.ResponseMimeType = "application/json";
+        }
+
         return config;
     }
 

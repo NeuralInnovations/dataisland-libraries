@@ -73,6 +73,20 @@ public class OpenAiProvider : ILlmProvider
         };
         if (request.MaxTokens.HasValue)
             options.MaxOutputTokenCount = request.MaxTokens.Value;
+
+        // Set response format for structured output
+        if (request.ResponseFormat == LlmResponseFormat.JsonSchema && request.JsonSchema is not null)
+        {
+            options.ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
+                jsonSchemaFormatName: request.JsonSchemaName ?? "response",
+                jsonSchema: BinaryData.FromString(request.JsonSchema),
+                jsonSchemaIsStrict: true);
+        }
+        else if (request.ResponseFormat == LlmResponseFormat.Json)
+        {
+            options.ResponseFormat = ChatResponseFormat.CreateJsonObjectFormat();
+        }
+
         return options;
     }
 

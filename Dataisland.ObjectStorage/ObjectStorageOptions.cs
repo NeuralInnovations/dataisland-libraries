@@ -16,6 +16,6 @@ public static class ObjectStorageOptionsExtensions
         this IConfiguration configuration, string section = "ObjectStorage")
     {
         return configuration.GetSection(section).Get<ObjectStorageOptions>()
-               ?? configuration.GetSection("MinIO").Get<ObjectStorageOptions>()!;
+               ?? configuration.GetSection("ObjectStorage").Get<ObjectStorageOptions>()!;
     }
 }

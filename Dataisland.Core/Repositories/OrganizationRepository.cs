@@ -15,6 +15,7 @@ public interface IOrganizationRepository : IRepository
     Task<Organization> CreateAsync(Organization org);
     Task UpdateAsync(Organization org);
     Task SoftDeleteAsync(string id);
+    Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId);
 }
 
 public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrganizationRepository
@@ -47,6 +48,13 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
     {
         org.ModifiedAt = DateTime.UtcNow;
         await Collection.ReplaceOneAsync(x => x.Id == org.Id, org);
+    }
+
+    public async Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId)
+    {
+        var org = await GetByIdAsync(orgId);
+        if (org is null || !org.MemberIds.Contains(memberUserId)) return null;
+        return org;
     }
 
     public async Task SoftDeleteAsync(string id) =>

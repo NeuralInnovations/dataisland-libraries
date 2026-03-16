@@ -25,8 +25,30 @@ public static class IdentityExtensions
             if (!string.IsNullOrEmpty(authority))
                 options.Authority = authority;
 
-            options.TokenValidationParameters.ValidateAudience = false;
+            var audience = configuration["Identity:Audience"];
+            if (!string.IsNullOrEmpty(audience))
+            {
+                options.TokenValidationParameters.ValidateAudience = true;
+                options.TokenValidationParameters.ValidAudience = audience;
+            }
+            else
+            {
+                options.TokenValidationParameters.ValidateAudience = false;
+            }
+
+            options.TokenValidationParameters.ValidateLifetime = true;
         });
+
+        var environment = configuration["ASPNETCORE_ENVIRONMENT"]
+                         ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+                         ?? "Production";
+        var isDevelopment = string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase);
+
+        if (isDebugAuth && !isDevelopment)
+        {
+            // Silently ignore debug auth in non-Development environments
+            isDebugAuth = false;
+        }
 
         if (isDebugAuth && !string.IsNullOrEmpty(debugSecret))
         {

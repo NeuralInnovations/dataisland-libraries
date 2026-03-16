@@ -19,6 +19,7 @@ public static class MiddlewareExtensions
 
     public static WebApplication AddHttpMiddleware(this WebApplication app)
     {
+        app.UseMiddleware<SecurityHeadersMiddleware>();
         app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
         return app;
     }

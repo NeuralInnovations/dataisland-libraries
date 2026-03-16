@@ -18,7 +18,8 @@ public class ElasticClientImpl : IElasticClient
 
         var uri = new Uri(options.Url);
         var settings = new ElasticsearchClientSettings(uri)
-            .RequestTimeout(TimeSpan.FromSeconds(options.RequestTimeoutSeconds));
+            .RequestTimeout(TimeSpan.FromSeconds(options.RequestTimeoutSeconds))
+            .PingTimeout(TimeSpan.FromSeconds(options.PingTimeoutSeconds));
 
         if (!string.IsNullOrWhiteSpace(options.Username) && !string.IsNullOrWhiteSpace(options.Password))
         {

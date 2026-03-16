@@ -5,9 +5,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Dataisland.ObjectStorage;
 
-public class S3FileStorage : IFileStorage
+public class S3FileStorage : IFileStorage, IAsyncDisposable
 {
-    private readonly IAmazonS3 _client;
+    private readonly AmazonS3Client _client;
     private readonly ILogger<S3FileStorage> _logger;
 
     public S3FileStorage(ObjectStorageOptions options, ILogger<S3FileStorage> logger)
@@ -20,7 +20,10 @@ public class S3FileStorage : IFileStorage
         {
             ServiceURL = $"{(options.UseSsl ? "https" : "http")}://{options.Endpoint}",
             ForcePathStyle = true,
-            AuthenticationRegion = "us-east-1"
+            AuthenticationRegion = "us-east-1",
+            Timeout = TimeSpan.FromSeconds(30),
+            RetryMode = RequestRetryMode.Standard,
+            MaxErrorRetry = 3
         };
 
         _client = new AmazonS3Client(credentials, config);
@@ -109,5 +112,11 @@ public class S3FileStorage : IFileStorage
         });
 
         return Task.FromResult(url);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _client.Dispose();
+        return ValueTask.CompletedTask;
     }
 }

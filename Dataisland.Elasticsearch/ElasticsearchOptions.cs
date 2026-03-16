@@ -9,6 +9,7 @@ public class ElasticsearchOptions
     public string? Password { get; set; }
     public string? CertificateFingerprint { get; set; }
     public int RequestTimeoutSeconds { get; set; } = 60;
+    public int PingTimeoutSeconds { get; set; } = 10;
     public int DefaultVectorDimensions { get; set; } = 1024;
 }
 

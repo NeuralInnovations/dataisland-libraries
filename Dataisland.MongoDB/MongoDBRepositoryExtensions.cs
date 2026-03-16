@@ -57,8 +57,10 @@ public static class MongoDBRepositoryExtensions
 
         settings.MinConnectionPoolSize = options.MinConnectionPoolSize;
         settings.MaxConnectionPoolSize = options.MaxConnectionPoolSize;
-
         settings.WaitQueueTimeout = options.WaitQueueTimeout;
+        settings.ConnectTimeout = options.ConnectTimeout;
+        settings.SocketTimeout = options.SocketTimeout;
+        settings.ServerSelectionTimeout = options.ServerSelectionTimeout;
 
         // factory
         (IMongoDBProvider Provider, IMongoDBConnection Connection) client;

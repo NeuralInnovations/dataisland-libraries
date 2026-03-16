@@ -16,7 +16,17 @@ public class CacheService(IStringCacheAsync cache) : ICacheService
     {
         var cached = await cache.GetAsync(key);
         if (cached is not null)
-            return JsonSerializer.Deserialize<T>(cached);
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<T>(cached);
+            }
+            catch (JsonException)
+            {
+                // Corrupted or incompatible cache entry — treat as cache miss
+                await cache.DeleteAsync(key);
+            }
+        }
 
         var value = await factory();
         if (value is not null)

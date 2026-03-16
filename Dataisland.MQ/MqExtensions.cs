@@ -45,9 +45,6 @@ namespace Dataisland.MQ
                             ));
                         }
 
-                        e.UseMessageRetry(a =>
-                            a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
-                        );
                         if (attribute.ConsumerTimeoutInSeconds > 0)
                             e.UseTimeout(t => t.Timeout = TimeSpan.FromSeconds(attribute.ConsumerTimeoutInSeconds));
 

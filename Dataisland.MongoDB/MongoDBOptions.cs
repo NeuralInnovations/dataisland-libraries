@@ -10,4 +10,10 @@ public class MongoDBOptions
     public int MaxConnectionPoolSize { get; set; } = 500;
 
     public TimeSpan WaitQueueTimeout { get; set; } = TimeSpan.FromMinutes(2);
+
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    public TimeSpan SocketTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    public TimeSpan ServerSelectionTimeout { get; set; } = TimeSpan.FromSeconds(30);
 }

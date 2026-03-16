@@ -95,32 +95,19 @@ public class ElasticClientImpl : IElasticClient
         }
     }
 
-    public async Task<bool> CreateIndexAsync(string indexName, int dimensions = 1024, CancellationToken ct = default)
+    public async Task<bool> CreateIndexAsync(string indexName, Action<IndexMappingBuilder> configureMappings, CancellationToken ct = default)
     {
         var exists = await _client.Indices.ExistsAsync(indexName, ct);
         if (exists.Exists) return false;
+
+        var builder = new IndexMappingBuilder();
+        configureMappings(builder);
 
         var response = await _client.Indices.CreateAsync(indexName, c => c
             .Settings(s => s
                 .Lifecycle(lc => lc.Name(IlmPolicyName)))
             .Mappings(m => m
-                .Properties(new Properties
-                {
-                    { "text", new TextProperty() },
-                    { "doc_id", new KeywordProperty() },
-                    { "file_id", new KeywordProperty() },
-                    { "file_name", new KeywordProperty() },
-                    { "page", new IntegerNumberProperty() },
-                    { "metadata", new TextProperty() },
-                    { "summary", new TextProperty() },
-                    { "embedding", new DenseVectorProperty
-                        {
-                            Dims = dimensions,
-                            Index = true,
-                            Similarity = DenseVectorSimilarity.Cosine
-                        }
-                    }
-                })
+                .Properties(builder.Properties)
             ), ct);
 
         if (!response.IsValidResponse)

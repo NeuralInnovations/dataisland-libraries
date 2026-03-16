@@ -9,7 +9,7 @@ public interface IElasticClient
     Task EnsureIlmPolicyAsync(CancellationToken ct = default);
 
     // Index management
-    Task<bool> CreateIndexAsync(string indexName, int dimensions = 1024, CancellationToken ct = default);
+    Task<bool> CreateIndexAsync(string indexName, Action<IndexMappingBuilder> configureMappings, CancellationToken ct = default);
     Task<bool> DeleteIndexAsync(string indexName, CancellationToken ct = default);
     Task<bool> IndexExistsAsync(string indexName, CancellationToken ct = default);
     Task ReindexAsync(string sourceIndex, string targetIndex, CancellationToken ct = default);

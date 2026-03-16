@@ -51,12 +51,15 @@ public static class LlmOptionsExtensions
     /// </summary>
     public static LlmOptions GetLlmOptions(this IConfiguration configuration)
     {
-        var simple = configuration["LLM__SimpleModelConfig"]
+        // .NET EnvironmentVariablesConfigurationProvider converts __ to : in env var names,
+        // so LLM__SimpleModelConfig env var becomes LLM:SimpleModelConfig config key.
+        // Try both formats for compatibility with direct env access and .NET config hierarchy.
+        var simple = configuration["LLM:SimpleModelConfig"] ?? configuration["LLM__SimpleModelConfig"]
             ?? throw new InvalidOperationException("LLM__SimpleModelConfig env var is required");
-        var normal = configuration["LLM__NormalModelConfig"];
-        var advanced = configuration["LLM__AdvancedModelConfig"];
-        var backup = configuration["LLM__BackupModelConfig"];
-        var vision = configuration["LLM__VisionModelConfig"];
+        var normal = configuration["LLM:NormalModelConfig"] ?? configuration["LLM__NormalModelConfig"];
+        var advanced = configuration["LLM:AdvancedModelConfig"] ?? configuration["LLM__AdvancedModelConfig"];
+        var backup = configuration["LLM:BackupModelConfig"] ?? configuration["LLM__BackupModelConfig"];
+        var vision = configuration["LLM:VisionModelConfig"] ?? configuration["LLM__VisionModelConfig"];
 
         var simpleConfig = ModelConfig.FromJson(simple);
         return new LlmOptions

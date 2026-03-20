@@ -17,7 +17,8 @@ namespace Dataisland.MQ
 
         public void Configure(
             IBusRegistrationContext ctx,
-            IRabbitMqBusFactoryConfigurator cfg)
+            IRabbitMqBusFactoryConfigurator cfg,
+            RabbitMqOptions options)
         {
             foreach (var pair in _maps)
             {
@@ -32,6 +33,23 @@ namespace Dataisland.MQ
                             e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
+
+                        var queueType = attribute.QueueType != QueueType.Inherited
+                            ? attribute.QueueType
+                            : options.DefaultQueueType;
+
+                        if (queueType == QueueType.Quorum)
+                        {
+                            e.SetQuorumQueue();
+
+                            var deliveryLimit = attribute.DeliveryLimit >= 0
+                                ? attribute.DeliveryLimit
+                                : options.DeliveryLimit;
+
+                            if (deliveryLimit > 0)
+                                e.SetQueueArgument("x-delivery-limit", deliveryLimit);
+                        }
+
                         if (attribute.RetryCount > 0)
                             e.UseMessageRetry(a =>
                                 a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
@@ -83,7 +101,7 @@ namespace Dataisland.MQ
                         h.Password(options.Password);
                     });
 
-                    impl.Configure(ctx, cfg);
+                    impl.Configure(ctx, cfg, options);
 
                     cfg.ConfigureEndpoints(ctx);
                 });

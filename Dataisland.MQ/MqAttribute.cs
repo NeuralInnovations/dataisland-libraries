@@ -19,5 +19,7 @@ namespace Dataisland.MQ
         public int RetryCount { get; set; } = 3;
         public float RetryIntervalInSeconds { get; set; } = 3;
         public int ConsumerTimeoutInSeconds { get; set; } = 0;
+        public QueueType QueueType { get; set; } = QueueType.Inherited;
+        public int DeliveryLimit { get; set; } = -1;
     }
 }

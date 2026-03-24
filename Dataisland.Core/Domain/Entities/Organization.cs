@@ -19,4 +19,7 @@ public class Organization : EntityCas
 
     [BsonElement("deletedMemberIds")]
     public List<ObjectId> DeletedMemberIds { get; set; } = [];
+
+    [BsonElement("memberRoles")]
+    public List<OrganizationMemberRole> MemberRoles { get; set; } = [];
 }

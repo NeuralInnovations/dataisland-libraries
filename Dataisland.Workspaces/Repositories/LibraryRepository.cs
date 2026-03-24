@@ -26,7 +26,7 @@ public class LibraryRepository : RepositoryWithIndex<Library>, ILibraryRepositor
         await Collection.Find(x => x.Id == id).FirstOrDefaultAsync();
 
     public async Task<List<Library>> GetByOrganizationIdAsync(ObjectId organizationId) =>
-        await Collection.Find(x => x.OrganizationIds.Contains(organizationId) && !x.IsDeleted).ToListAsync();
+        await Collection.Find(x => (x.OrganizationIds.Contains(organizationId) || x.Profile.IsPublic) && !x.IsDeleted).ToListAsync();
 
     public async Task<List<Library>> GetLocalLibrariesAsync() =>
         await Collection.Find(x => x.Profile.Type == LibraryType.Local && !x.IsDeleted).ToListAsync();

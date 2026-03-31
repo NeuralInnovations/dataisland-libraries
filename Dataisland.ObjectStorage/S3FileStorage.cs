@@ -47,35 +47,31 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
     {
         await EnsureBucketAsync(bucket, ct);
 
-        // Set ContentLength explicitly to avoid chunked transfer encoding,
-        // which can cause SeaweedFS to store chunk manifests instead of actual content
-        if (content.CanSeek)
+        // Always buffer to MemoryStream for reliable upload:
+        // 1. Guarantees Content-Length is set (no chunked transfer)
+        // 2. UseChunkEncoding=false prevents AWS SDK chunked payload signing
+        //    which SeaweedFS stores as chunk manifests instead of actual content
+        MemoryStream ms;
+        if (content is MemoryStream existing && existing.Position == 0)
         {
-            var length = content.Length - content.Position;
-            await _client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = bucket,
-                Key = path,
-                InputStream = content,
-                ContentType = contentType,
-                Headers = { ContentLength = length }
-            }, ct);
+            ms = existing;
         }
         else
         {
-            // Non-seekable: buffer to get length
-            var ms = new MemoryStream();
+            ms = new MemoryStream();
             await content.CopyToAsync(ms, ct);
             ms.Position = 0;
-            await _client.PutObjectAsync(new PutObjectRequest
-            {
-                BucketName = bucket,
-                Key = path,
-                InputStream = ms,
-                ContentType = contentType,
-                Headers = { ContentLength = ms.Length }
-            }, ct);
         }
+
+        await _client.PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = bucket,
+            Key = path,
+            InputStream = ms,
+            ContentType = contentType,
+            UseChunkEncoding = false,
+            Headers = { ContentLength = ms.Length }
+        }, ct);
     }
 
     public async Task DeleteAsync(string bucket, string path, CancellationToken ct = default)

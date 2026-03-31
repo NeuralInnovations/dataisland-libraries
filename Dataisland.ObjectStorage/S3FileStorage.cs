@@ -48,20 +48,34 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
         await EnsureBucketAsync(bucket, ct);
 
         // Set ContentLength explicitly to avoid chunked transfer encoding,
-        // which causes SeaweedFS to store chunk manifests instead of actual content
-        var putRequest = new PutObjectRequest
-        {
-            BucketName = bucket,
-            Key = path,
-            InputStream = content,
-            ContentType = contentType,
-            DisablePayloadSigning = true
-        };
-
+        // which can cause SeaweedFS to store chunk manifests instead of actual content
         if (content.CanSeek)
-            putRequest.Headers.ContentLength = content.Length - content.Position;
-
-        await _client.PutObjectAsync(putRequest, ct);
+        {
+            var length = content.Length - content.Position;
+            await _client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = path,
+                InputStream = content,
+                ContentType = contentType,
+                Headers = { ContentLength = length }
+            }, ct);
+        }
+        else
+        {
+            // Non-seekable: buffer to get length
+            var ms = new MemoryStream();
+            await content.CopyToAsync(ms, ct);
+            ms.Position = 0;
+            await _client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = path,
+                InputStream = ms,
+                ContentType = contentType,
+                Headers = { ContentLength = ms.Length }
+            }, ct);
+        }
     }
 
     public async Task DeleteAsync(string bucket, string path, CancellationToken ct = default)

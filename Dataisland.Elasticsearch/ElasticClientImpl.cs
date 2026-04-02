@@ -213,13 +213,37 @@ public class ElasticClientImpl : IElasticClient
     {
         var response = await _client.SearchAsync<T>(s => s
             .Index(string.Join(",", indices))
+            .Size(100)
             .Query(q => q
                 .Bool(b => b
                     .Should(queries.Select(query =>
                         (Action<QueryDescriptor<T>>)(sq =>
-                            sq.MultiMatch(mm => mm
-                                .Query(query)
-                                .Fields(new[] { "text", "metadata", "summary" })
+                            sq.Bool(bq => bq
+                                .Should(
+                                    // Exact/fuzzy match on metadata (highest boost — contains ICD codes, disease names)
+                                    smm => smm.Match(m => m
+                                        .Field(new Field("metadata"))
+                                        .Query(query)
+                                        .Fuzziness(new Fuzziness("AUTO"))
+                                        .Boost(3.0f)),
+                                    // Match on file_name (protocol titles contain diagnosis names)
+                                    smm => smm.Match(m => m
+                                        .Field(new Field("file_name"))
+                                        .Query(query)
+                                        .Fuzziness(new Fuzziness("AUTO"))
+                                        .Boost(2.5f)),
+                                    // Match on summary
+                                    smm => smm.Match(m => m
+                                        .Field(new Field("summary"))
+                                        .Query(query)
+                                        .Fuzziness(new Fuzziness("AUTO"))
+                                        .Boost(2.0f)),
+                                    // Match on text content (lowest boost — raw chunk text)
+                                    smm => smm.Match(m => m
+                                        .Field(new Field("text"))
+                                        .Query(query)
+                                        .Boost(1.0f))
+                                )
                             )
                         )
                     ).ToArray())

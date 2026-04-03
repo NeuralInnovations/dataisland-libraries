@@ -119,7 +119,7 @@ namespace Dataisland.MQ
 
                     impl.Configure(ctx, cfg, options);
 
-                    cfg.ConfigureEndpoints(ctx);
+                    cfg.ConfigureEndpoints(ctx, new KebabCaseEndpointNameFormatter(false));
                 });
             });
             return services;

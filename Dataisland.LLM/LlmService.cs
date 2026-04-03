@@ -11,40 +11,54 @@ public class LlmService : ILlmService
 {
     private readonly LlmOptions _options;
     private readonly Dictionary<string, ILlmProvider> _providers = new();
+    private readonly Dictionary<string, ResiliencePipeline> _circuitBreakers = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LlmService> _logger;
-    private readonly ResiliencePipeline _circuitBreaker;
 
     public LlmService(LlmOptions options, ILoggerFactory loggerFactory)
     {
         _options = options;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<LlmService>();
+    }
 
-        _circuitBreaker = new ResiliencePipelineBuilder()
-            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
-            {
-                FailureRatio = 0.5,
-                SamplingDuration = TimeSpan.FromSeconds(30),
-                MinimumThroughput = 5,
-                BreakDuration = TimeSpan.FromSeconds(60),
-                OnOpened = args =>
+    /// <summary>
+    /// Per-provider circuit breaker so that a failing Normal tier
+    /// does not block Backup tier (they typically use different providers/models).
+    /// </summary>
+    private ResiliencePipeline GetCircuitBreaker(ModelConfig config)
+    {
+        var key = $"{config.Provider}:{config.Model}";
+        if (!_circuitBreakers.TryGetValue(key, out var cb))
+        {
+            cb = new ResiliencePipelineBuilder()
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
                 {
-                    _logger.LogWarning("LLM circuit breaker OPENED for {Duration}s", args.BreakDuration.TotalSeconds);
-                    return ValueTask.CompletedTask;
-                },
-                OnClosed = _ =>
-                {
-                    _logger.LogInformation("LLM circuit breaker CLOSED");
-                    return ValueTask.CompletedTask;
-                },
-                OnHalfOpened = _ =>
-                {
-                    _logger.LogInformation("LLM circuit breaker HALF-OPEN");
-                    return ValueTask.CompletedTask;
-                }
-            })
-            .Build();
+                    FailureRatio = 0.5,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 5,
+                    BreakDuration = TimeSpan.FromSeconds(60),
+                    OnOpened = args =>
+                    {
+                        _logger.LogWarning("LLM circuit breaker OPENED for {Model} ({Duration}s)",
+                            config.Model, args.BreakDuration.TotalSeconds);
+                        return ValueTask.CompletedTask;
+                    },
+                    OnClosed = _ =>
+                    {
+                        _logger.LogInformation("LLM circuit breaker CLOSED for {Model}", config.Model);
+                        return ValueTask.CompletedTask;
+                    },
+                    OnHalfOpened = _ =>
+                    {
+                        _logger.LogInformation("LLM circuit breaker HALF-OPEN for {Model}", config.Model);
+                        return ValueTask.CompletedTask;
+                    }
+                })
+                .Build();
+            _circuitBreakers[key] = cb;
+        }
+        return cb;
     }
 
     public async Task<LlmResponse> CompleteAsync(
@@ -67,7 +81,7 @@ public class LlmService : ILlmService
         var sw = Stopwatch.StartNew();
 
         // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
-        var retryDelays = new[] { 2, 5, 10 }; // seconds between retries
+        var retryDelays = new[] { 5, 15, 30 }; // seconds — Gemini quota resets ~47s, need longer waits
 
         for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
@@ -76,7 +90,7 @@ public class LlmService : ILlmService
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
 
-                var response = await _circuitBreaker.ExecuteAsync(
+                var response = await GetCircuitBreaker(config).ExecuteAsync(
                     async token => await provider.CompleteAsync(request, token),
                     timeoutCts.Token);
 
@@ -171,7 +185,7 @@ public class LlmService : ILlmService
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
-        var retryDelays = new[] { 2, 5, 10 }; // seconds between retries
+        var retryDelays = new[] { 5, 15, 30 }; // seconds — Gemini quota resets ~47s, need longer waits
 
         for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
@@ -180,7 +194,7 @@ public class LlmService : ILlmService
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
 
-                var response = await _circuitBreaker.ExecuteAsync(
+                var response = await GetCircuitBreaker(config).ExecuteAsync(
                     async token => await provider.CompleteAsync(request, token),
                     timeoutCts.Token);
 

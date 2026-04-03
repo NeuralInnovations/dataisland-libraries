@@ -171,16 +171,24 @@ public class ElasticClientImpl : IElasticClient
     }
 
     public async Task<IReadOnlyList<SearchHit<T>>> KnnSearchAsync<T>(
-        string[] indices, float[] queryVector, int k, CancellationToken ct = default)
+        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, CancellationToken ct = default)
     {
-        var response = await _client.SearchAsync<T>(s => s
-            .Index(string.Join(",", indices))
-            .Knn(knn => knn
-                .Field(new Field("embedding"))
-                .QueryVector(queryVector)
-                .k(k)
-                .NumCandidates(k * 2)
-            ), ct);
+        var response = await _client.SearchAsync<T>(s =>
+            s.Index(string.Join(",", indices))
+                .Knn(knn =>
+                {
+                    // When filtering by file_id, use more candidates to ensure good recall
+                    // within a single file (unfiltered: k*2 is standard; filtered: k*5 compensates for filter)
+                    var numCandidates = string.IsNullOrEmpty(fileIdFilter) ? k * 2 : Math.Max(k * 5, 100);
+                    knn.Field(new Field("embedding"))
+                        .QueryVector(queryVector)
+                        .k(k)
+                        .NumCandidates(numCandidates);
+
+                    // Server-side file_id filter — applied within KNN search, not client-side
+                    if (!string.IsNullOrEmpty(fileIdFilter))
+                        knn.Filter(f => f.Term(new TermQuery(new Field("file_id")) { Value = fileIdFilter }));
+                }), ct);
 
         if (!response.IsValidResponse) return [];
 
@@ -190,13 +198,13 @@ public class ElasticClientImpl : IElasticClient
     }
 
     public async Task<IReadOnlyList<SearchHit<T>>> MultiSearchAsync<T>(
-        string[] indices, float[][] queryVectors, int k, CancellationToken ct = default)
+        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, CancellationToken ct = default)
     {
         var allResults = new List<SearchHit<T>>();
 
         foreach (var vector in queryVectors)
         {
-            var hits = await KnnSearchAsync<T>(indices, vector, k, ct);
+            var hits = await KnnSearchAsync<T>(indices, vector, k, fileIdFilter, ct);
             allResults.AddRange(hits);
         }
 
@@ -208,45 +216,67 @@ public class ElasticClientImpl : IElasticClient
             .ToList();
     }
 
+    private static readonly System.Text.RegularExpressions.Regex IcdCodePattern =
+        new(@"^[A-Z]\d{2}(\.\d{1,2})?$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     public async Task<IReadOnlyList<SearchHit<T>>> SearchByMetadataAsync<T>(
         string[] indices, string[] queries, CancellationToken ct = default)
     {
+        // Extract ICD-10 codes from queries for exact keyword matching
+        var icdCodes = queries.Where(q => IcdCodePattern.IsMatch(q.Trim())).ToArray();
+        // Extract ICD-10 root codes (e.g., J20.9 → J20) for prefix matching
+        var icdRoots = icdCodes.Select(c => c.Contains('.') ? c.Split('.')[0] : c).Distinct().ToArray();
+
         var response = await _client.SearchAsync<T>(s => s
             .Index(string.Join(",", indices))
             .Size(100)
             .Query(q => q
                 .Bool(b => b
-                    .Should(queries.Select(query =>
-                        (Action<QueryDescriptor<T>>)(sq =>
-                            sq.Bool(bq => bq
-                                .Should(
-                                    // Exact/fuzzy match on metadata (highest boost — contains ICD codes, disease names)
-                                    smm => smm.Match(m => m
-                                        .Field(new Field("metadata"))
-                                        .Query(query)
-                                        .Fuzziness(new Fuzziness("AUTO"))
-                                        .Boost(3.0f)),
-                                    // Match on file_name (protocol titles contain diagnosis names)
-                                    smm => smm.Match(m => m
-                                        .Field(new Field("file_name"))
-                                        .Query(query)
-                                        .Fuzziness(new Fuzziness("AUTO"))
-                                        .Boost(2.5f)),
-                                    // Match on summary
-                                    smm => smm.Match(m => m
-                                        .Field(new Field("summary"))
-                                        .Query(query)
-                                        .Fuzziness(new Fuzziness("AUTO"))
-                                        .Boost(2.0f)),
-                                    // Match on text content (lowest boost — raw chunk text)
-                                    smm => smm.Match(m => m
-                                        .Field(new Field("text"))
-                                        .Query(query)
-                                        .Boost(1.0f))
+                    .Should(
+                        // Per-query fuzzy matching across text fields
+                        queries.Select(query =>
+                            (Action<QueryDescriptor<T>>)(sq =>
+                                sq.Bool(bq => bq
+                                    .Should(
+                                        // Exact/fuzzy match on metadata (highest boost — contains ICD codes, disease names)
+                                        smm => smm.Match(m => m
+                                            .Field(new Field("metadata"))
+                                            .Query(query)
+                                            .Fuzziness(new Fuzziness("AUTO"))
+                                            .Boost(3.0f)),
+                                        // Match on file_name (protocol titles contain diagnosis names)
+                                        smm => smm.Match(m => m
+                                            .Field(new Field("file_name"))
+                                            .Query(query)
+                                            .Fuzziness(new Fuzziness("AUTO"))
+                                            .Boost(2.5f)),
+                                        // Match on summary
+                                        smm => smm.Match(m => m
+                                            .Field(new Field("summary"))
+                                            .Query(query)
+                                            .Fuzziness(new Fuzziness("AUTO"))
+                                            .Boost(2.0f)),
+                                        // Match on text content (lowest boost — raw chunk text)
+                                        smm => smm.Match(m => m
+                                            .Field(new Field("text"))
+                                            .Query(query)
+                                            .Boost(1.0f))
+                                    )
                                 )
                             )
                         )
-                    ).ToArray())
+                        // ICD-10 exact match on keyword field (strongest signal for protocol matching)
+                        .Concat(icdCodes.Select(code =>
+                            (Action<QueryDescriptor<T>>)(sq =>
+                                sq.Term(new TermQuery(new Field("icd10_codes")) { Value = code, Boost = 5.0f }))
+                        ))
+                        // ICD-10 root prefix match (e.g., J20 matches J20.0, J20.1, etc.)
+                        .Concat(icdRoots.Select(root =>
+                            (Action<QueryDescriptor<T>>)(sq =>
+                                sq.Prefix(p => p.Field(new Field("icd10_codes")).Value(root).Boost(4.0f)))
+                        ))
+                        .ToArray()
+                    )
                 )
             ), ct);
 

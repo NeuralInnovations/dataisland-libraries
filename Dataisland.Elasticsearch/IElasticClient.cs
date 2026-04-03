@@ -22,10 +22,10 @@ public interface IElasticClient
 
     // Search
     Task<IReadOnlyList<SearchHit<T>>> KnnSearchAsync<T>(
-        string[] indices, float[] queryVector, int k, CancellationToken ct = default);
+        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<SearchHit<T>>> MultiSearchAsync<T>(
-        string[] indices, float[][] queryVectors, int k, CancellationToken ct = default);
+        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<SearchHit<T>>> SearchByMetadataAsync<T>(
         string[] indices, string[] queries, CancellationToken ct = default);

@@ -12,6 +12,7 @@ public interface IWorkspaceRepository : IRepository
     Task<List<Workspace>> GetByOrganizationIdAsync(ObjectId organizationId);
     Task<PaginatedResult<Workspace>> GetByOrganizationIdPaginatedAsync(ObjectId organizationId, PaginationQuery pagination);
     Task<List<Workspace>> GetSharedByOrganizationIdAsync(ObjectId organizationId);
+    Task<List<Workspace>> GetSharedByOrganizationIdsAsync(IEnumerable<ObjectId> organizationIds);
     Task<List<Workspace>> GetAllWithProtocolSyncAsync();
     Task<Workspace> CreateAsync(Workspace workspace);
     Task UpdateAsync(Workspace workspace);
@@ -42,6 +43,15 @@ public class WorkspaceRepository : RepositoryWithIndex<Workspace>, IWorkspaceRep
                                    && x.Profile.IsShared
                                    && !x.Metadata.IsDeleted)
             .ToListAsync();
+
+    public async Task<List<Workspace>> GetSharedByOrganizationIdsAsync(IEnumerable<ObjectId> organizationIds)
+    {
+        var orgIds = organizationIds.ToList();
+        return await Secondary.Find(x => orgIds.Contains(x.Metadata.OrganizationId)
+                                          && x.Profile.IsShared
+                                          && !x.Metadata.IsDeleted)
+            .ToListAsync();
+    }
 
     public async Task<List<Workspace>> GetAllWithProtocolSyncAsync() =>
         await Secondary.Find(x => !x.Metadata.IsDeleted

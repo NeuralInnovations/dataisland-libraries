@@ -66,54 +66,73 @@ public class LlmService : ILlmService
         var tierName = tier.ToString();
         var sw = Stopwatch.StartNew();
 
-        try
+        // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
+        var retryDelays = new[] { 2, 5, 10 }; // seconds between retries
+
+        for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+            try
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
 
-            var response = await _circuitBreaker.ExecuteAsync(
-                async token => await provider.CompleteAsync(request, token),
-                timeoutCts.Token);
+                var response = await _circuitBreaker.ExecuteAsync(
+                    async token => await provider.CompleteAsync(request, token),
+                    timeoutCts.Token);
 
-            sw.Stop();
-            RecordMetrics(config, tierName, response, sw.Elapsed);
+                sw.Stop();
+                RecordMetrics(config, tierName, response, sw.Elapsed);
 
-            return response;
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            sw.Stop();
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "timeout").Inc();
-            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+                if (attempt > 0)
+                    _logger.LogInformation("LLM call succeeded for tier {Tier} on retry attempt {Attempt}", tier, attempt);
 
-            _logger.LogWarning("LLM call timed out after {Timeout}s for tier {Tier}, model {Model}",
-                config.TimeoutSeconds, tier, config.Model);
-
-            if (tier != ModelTier.Backup)
+                return response;
+            }
+            catch (BrokenCircuitException ex) when (tier != ModelTier.Backup)
+            {
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
+                _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back to Backup", tier);
                 return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                sw.Stop();
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "timeout").Inc();
+                LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+                _logger.LogWarning("LLM call timed out after {Timeout}s for tier {Tier} (attempt {Attempt})",
+                    config.TimeoutSeconds, tier, attempt + 1);
 
-            throw new TimeoutException($"LLM call timed out after {config.TimeoutSeconds}s (model: {config.Model})");
-        }
-        catch (BrokenCircuitException ex)
-        {
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
+                // Timeout — no point retrying, go to backup
+                if (tier != ModelTier.Backup)
+                    return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+                throw new TimeoutException($"LLM call timed out after {config.TimeoutSeconds}s (model: {config.Model})");
+            }
+            catch (Exception ex) when (attempt < retryDelays.Length)
+            {
+                // Retryable error (rate limit, server error) — wait and retry on SAME tier
+                var delay = retryDelays[attempt];
+                _logger.LogWarning(ex, "LLM call failed for tier {Tier} (attempt {Attempt}/{Max}), retrying in {Delay}s",
+                    tier, attempt + 1, retryDelays.Length + 1, delay);
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "retry").Inc();
 
-            _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back", tier);
+                await Task.Delay(TimeSpan.FromSeconds(delay), ct);
+                sw = Stopwatch.StartNew(); // reset timer for next attempt
+            }
+            catch (Exception ex) when (tier != ModelTier.Backup)
+            {
+                // All retries exhausted — fall back to Backup tier
+                sw.Stop();
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "error").Inc();
+                LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
 
-            if (tier != ModelTier.Backup)
+                _logger.LogWarning(ex, "LLM call failed for tier {Tier} after {Attempts} attempts, falling back to Backup",
+                    tier, retryDelays.Length + 1);
                 return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
-
-            throw new ServiceUnavailableException("LLM", ex);
+            }
         }
-        catch (Exception ex) when (tier != ModelTier.Backup)
-        {
-            sw.Stop();
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "error").Inc();
-            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
 
-            _logger.LogWarning(ex, "LLM call failed for tier {Tier}, falling back to Backup", tier);
-            return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
-        }
+        // Should not reach here, but satisfy compiler
+        throw new InvalidOperationException("LLM retry loop exited unexpectedly");
     }
 
     public async Task<LlmResponse<T>> CompleteAsync<T>(
@@ -151,60 +170,77 @@ public class LlmService : ILlmService
         var tierName = tier.ToString();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        try
+        // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
+        var retryDelays = new[] { 2, 5, 10 }; // seconds between retries
+
+        for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+            try
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
 
-            var response = await _circuitBreaker.ExecuteAsync(
-                async token => await provider.CompleteAsync(request, token),
-                timeoutCts.Token);
+                var response = await _circuitBreaker.ExecuteAsync(
+                    async token => await provider.CompleteAsync(request, token),
+                    timeoutCts.Token);
 
-            sw.Stop();
-            RecordMetrics(config, tierName, response, sw.Elapsed);
+                sw.Stop();
+                RecordMetrics(config, tierName, response, sw.Elapsed);
 
-            var parsed = JsonResponseParser.TryParse<T>(response.Content, _logger);
+                if (attempt > 0)
+                    _logger.LogInformation("LLM call succeeded for tier {Tier}<{Type}> on retry attempt {Attempt}",
+                        tier, typeName, attempt);
 
-            return new LlmResponse<T>(
-                Value: parsed,
-                RawContent: response.Content,
-                PromptTokens: response.PromptTokens,
-                CompletionTokens: response.CompletionTokens,
-                Model: response.Model);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            sw.Stop();
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "timeout").Inc();
-            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+                var parsed = JsonResponseParser.TryParse<T>(response.Content, _logger);
 
-            _logger.LogWarning("LLM call timed out after {Timeout}s for tier {Tier}, model {Model}",
-                config.TimeoutSeconds, tier, config.Model);
-
-            if (tier != ModelTier.Backup)
+                return new LlmResponse<T>(
+                    Value: parsed,
+                    RawContent: response.Content,
+                    PromptTokens: response.PromptTokens,
+                    CompletionTokens: response.CompletionTokens,
+                    Model: response.Model);
+            }
+            catch (BrokenCircuitException ex) when (tier != ModelTier.Backup)
+            {
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
+                _logger.LogWarning("LLM circuit breaker is open for tier {Tier}<{Type}>, falling back to Backup", tier, typeName);
                 return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                sw.Stop();
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "timeout").Inc();
+                LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+                _logger.LogWarning("LLM call timed out after {Timeout}s for tier {Tier}<{Type}> (attempt {Attempt})",
+                    config.TimeoutSeconds, tier, typeName, attempt + 1);
 
-            throw new TimeoutException($"LLM call timed out after {config.TimeoutSeconds}s (model: {config.Model})");
-        }
-        catch (BrokenCircuitException ex)
-        {
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
-            _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back", tier);
+                if (tier != ModelTier.Backup)
+                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
+                throw new TimeoutException($"LLM call timed out after {config.TimeoutSeconds}s (model: {config.Model})");
+            }
+            catch (Exception ex) when (attempt < retryDelays.Length)
+            {
+                var delay = retryDelays[attempt];
+                _logger.LogWarning(ex, "LLM call failed for tier {Tier}<{Type}> (attempt {Attempt}/{Max}), retrying in {Delay}s",
+                    tier, typeName, attempt + 1, retryDelays.Length + 1, delay);
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "retry").Inc();
 
-            if (tier != ModelTier.Backup)
+                await Task.Delay(TimeSpan.FromSeconds(delay), ct);
+                sw = Stopwatch.StartNew();
+            }
+            catch (Exception ex) when (tier != ModelTier.Backup)
+            {
+                sw.Stop();
+                LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "error").Inc();
+                LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
+
+                _logger.LogWarning(ex, "LLM call failed for tier {Tier}<{Type}> after {Attempts} attempts, falling back to Backup",
+                    tier, typeName, retryDelays.Length + 1);
                 return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
-
-            throw new ServiceUnavailableException("LLM", ex);
+            }
         }
-        catch (Exception ex) when (tier != ModelTier.Backup)
-        {
-            sw.Stop();
-            LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "error").Inc();
-            LlmMetrics.RequestDurationSeconds.WithLabels(config.Model, tierName, config.Provider).Observe(sw.Elapsed.TotalSeconds);
 
-            _logger.LogWarning(ex, "LLM call failed for tier {Tier}, falling back to Backup", tier);
-            return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, ct);
-        }
+        throw new InvalidOperationException("LLM retry loop exited unexpectedly");
     }
 
     private static bool SupportsJsonSchema(ModelConfig config)

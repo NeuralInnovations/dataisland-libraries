@@ -11,7 +11,7 @@ public class LlmService : ILlmService
 {
     private readonly LlmOptions _options;
     private readonly Dictionary<string, ILlmProvider> _providers = new();
-    private readonly Dictionary<string, ResiliencePipeline> _circuitBreakers = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ResiliencePipeline> _circuitBreakers = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LlmService> _logger;
 
@@ -29,36 +29,31 @@ public class LlmService : ILlmService
     private ResiliencePipeline GetCircuitBreaker(ModelConfig config)
     {
         var key = $"{config.Provider}:{config.Model}";
-        if (!_circuitBreakers.TryGetValue(key, out var cb))
-        {
-            cb = new ResiliencePipelineBuilder()
-                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+        return _circuitBreakers.GetOrAdd(key, _ => new ResiliencePipelineBuilder()
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+            {
+                FailureRatio = 0.5,
+                SamplingDuration = TimeSpan.FromSeconds(30),
+                MinimumThroughput = 5,
+                BreakDuration = TimeSpan.FromSeconds(60),
+                OnOpened = args =>
                 {
-                    FailureRatio = 0.5,
-                    SamplingDuration = TimeSpan.FromSeconds(30),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(60),
-                    OnOpened = args =>
-                    {
-                        _logger.LogWarning("LLM circuit breaker OPENED for {Model} ({Duration}s)",
-                            config.Model, args.BreakDuration.TotalSeconds);
-                        return ValueTask.CompletedTask;
-                    },
-                    OnClosed = _ =>
-                    {
-                        _logger.LogInformation("LLM circuit breaker CLOSED for {Model}", config.Model);
-                        return ValueTask.CompletedTask;
-                    },
-                    OnHalfOpened = _ =>
-                    {
-                        _logger.LogInformation("LLM circuit breaker HALF-OPEN for {Model}", config.Model);
-                        return ValueTask.CompletedTask;
-                    }
-                })
-                .Build();
-            _circuitBreakers[key] = cb;
-        }
-        return cb;
+                    _logger.LogWarning("LLM circuit breaker OPENED for {Model} ({Duration}s)",
+                        config.Model, args.BreakDuration.TotalSeconds);
+                    return ValueTask.CompletedTask;
+                },
+                OnClosed = _ =>
+                {
+                    _logger.LogInformation("LLM circuit breaker CLOSED for {Model}", config.Model);
+                    return ValueTask.CompletedTask;
+                },
+                OnHalfOpened = _ =>
+                {
+                    _logger.LogInformation("LLM circuit breaker HALF-OPEN for {Model}", config.Model);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build());
     }
 
     public async Task<LlmResponse> CompleteAsync(

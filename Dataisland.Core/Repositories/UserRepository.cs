@@ -12,6 +12,7 @@ public interface IUserRepository : IRepository
     Task<List<User>> GetByIdsAsync(IEnumerable<string> ids);
     Task<User> CreateAsync(User user);
     Task UpdateAsync(User user);
+    Task DeleteAsync(string id);
 }
 
 public class UserRepository : RepositoryWithIndex<User>, IUserRepository
@@ -39,6 +40,9 @@ public class UserRepository : RepositoryWithIndex<User>, IUserRepository
         user.ModifiedAt = DateTime.UtcNow;
         await Collection.ReplaceOneAsync(x => x.Id == user.Id, user);
     }
+
+    public async Task DeleteAsync(string id) =>
+        await Collection.DeleteOneAsync(x => x.Id == id);
 }
 
 file class UserIndexes : IndexesBuilder<User>

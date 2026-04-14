@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace DataIsland.Middleware;
@@ -9,6 +10,16 @@ public class ApiResponseFilter : IAsyncResultFilter
 
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
+        // Opt-out: controllers/actions marked with [SkipApiResponseWrapper] get
+        // raw JSON output for external-protocol compatibility.
+        if (context.ActionDescriptor is ControllerActionDescriptor cad
+            && (cad.MethodInfo.GetCustomAttributes(typeof(SkipApiResponseWrapperAttribute), inherit: true).Length > 0
+                || cad.ControllerTypeInfo.GetCustomAttributes(typeof(SkipApiResponseWrapperAttribute), inherit: true).Length > 0))
+        {
+            await next();
+            return;
+        }
+
         if (context.Result is ObjectResult { Value: not null } result)
         {
             var value = result.Value;

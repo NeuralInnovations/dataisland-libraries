@@ -110,6 +110,14 @@ public class GeminiProvider : ILlmProvider
         var config = new GenerateContentConfig
         {
             Temperature = request.Temperature,
+            // Disable Gemini 2.5 Flash "dynamic thinking" — these prompts are deterministic
+            // classifiers, query generators, and filters; thinking adds no quality but is billed
+            // as output tokens. Note: Gemini 2.5 Pro ignores budget=0 (mandatory thinking).
+            ThinkingConfig = new ThinkingConfig
+            {
+                ThinkingBudget = 0,
+                IncludeThoughts = false
+            }
         };
 
         if (request.MaxTokens.HasValue)

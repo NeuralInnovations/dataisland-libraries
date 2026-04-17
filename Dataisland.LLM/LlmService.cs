@@ -388,6 +388,37 @@ public class LlmService : ILlmService
         _ => _options.Simple
     };
 
+    public decimal EstimateCostUsd(string model, int promptTokens, int completionTokens, int cachedTokens = 0)
+    {
+        // Lookup is by exact model-name match so the same estimator works regardless of which
+        // tier the call was routed to (and across fallbacks between tiers). Match against every
+        // configured tier, take the first hit — if the same model is configured on multiple
+        // tiers, pricing is assumed identical.
+        var config = FindConfigByModel(model);
+        if (config is null) return 0m;
+
+        // Mirror of LlmService.RecordMetrics: cached input is billed at roughly half of normal
+        // on OpenAI (exact) and a quarter on Gemini (under-reports savings on Gemini). Using
+        // /2 as the blended approximation so cost-tracking remains consistent with metrics.
+        var billablePrompt = promptTokens - (cachedTokens / 2);
+        if (billablePrompt < 0) billablePrompt = 0;
+
+        return (decimal)billablePrompt / 1000m * config.InputTokenCostPer1K
+             + (decimal)completionTokens / 1000m * config.OutputTokenCostPer1K;
+    }
+
+    private ModelConfig? FindConfigByModel(string model)
+    {
+        var configs = new[] { _options.Simple, _options.Normal, _options.Advanced, _options.Backup, _options.Vision };
+        foreach (var c in configs)
+        {
+            if (c is not null && !string.IsNullOrEmpty(c.Model)
+                && string.Equals(c.Model, model, StringComparison.OrdinalIgnoreCase))
+                return c;
+        }
+        return null;
+    }
+
     private ILlmProvider GetOrCreateProvider(ModelConfig config)
     {
         var key = $"{config.Provider}:{config.Model}:{config.BaseUrl}";

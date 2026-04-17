@@ -21,6 +21,14 @@ public interface ILlmService
     IAsyncEnumerable<string> CompleteStreamingAsync(ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Estimate the USD cost of a completed request given its model-name and token usage.
+    /// Returns 0 when the model is not configured in LlmOptions or its per-1K prices are 0.
+    /// Used by downstream spend-tracking (per-organisation cap enforcement, per-case cost
+    /// attribution) so callers don't need to re-implement the pricing lookup themselves.
+    /// </summary>
+    decimal EstimateCostUsd(string model, int promptTokens, int completionTokens, int cachedTokens = 0);
 }
 
 public enum ModelTier

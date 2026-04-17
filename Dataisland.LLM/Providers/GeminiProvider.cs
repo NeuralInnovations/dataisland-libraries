@@ -78,10 +78,17 @@ public class GeminiProvider : ILlmProvider
                 $"Gemini returned empty completion (prompt_tokens={usage.PromptTokenCount}, candidates=0)");
         }
 
+        // Gemini 2.5 reports "thought" tokens separately from visible output but bills them at
+        // the same rate as output. They are non-zero even with ThinkingBudget=0 on 2.5 Pro
+        // (mandatory 128-token minimum) and on any model where budget=0 is ignored. Fold them
+        // into CompletionTokens so our cost/token metrics match Google's invoice.
+        var candidateTokens = usage?.CandidatesTokenCount ?? 0;
+        var thoughtTokens = usage?.ThoughtsTokenCount ?? 0;
+
         return new LlmResponse(
             Content: text,
             PromptTokens: usage?.PromptTokenCount ?? 0,
-            CompletionTokens: usage?.CandidatesTokenCount ?? 0,
+            CompletionTokens: candidateTokens + thoughtTokens,
             Model: request.Model)
         {
             CachedTokens = usage?.CachedContentTokenCount ?? 0

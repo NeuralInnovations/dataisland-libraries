@@ -27,6 +27,32 @@ public interface IApiSpendTracker
         CancellationToken ct = default);
 }
 
+/// <summary>
+/// No-op fallback used when MongoDB is not wired into the host service — e.g. Service.MedicalFlow
+/// deployments where the per-org spend cap feature is not yet enabled. Always permits processing
+/// and silently drops spend-record calls, so existing deployments that don't provide a MongoDB
+/// connection string still start cleanly without losing case-processing functionality.
+/// </summary>
+public class NullApiSpendTracker(ILogger<NullApiSpendTracker> logger) : IApiSpendTracker
+{
+    private bool _warned;
+
+    public Task<SpendGateResult> CheckAsync(string organizationId, CancellationToken ct = default)
+    {
+        if (!_warned)
+        {
+            logger.LogWarning(
+                "NullApiSpendTracker in use — per-organisation API spend caps are DISABLED. " +
+                "Set MongoDB__ConnectionString on the service to enable enforcement.");
+            _warned = true;
+        }
+        return Task.FromResult(new SpendGateResult(true, 0m, 0m, null));
+    }
+
+    public Task<decimal> RecordAsync(string organizationId, decimal costUsd, long promptTokens, long completionTokens, CancellationToken ct = default)
+        => Task.FromResult(0m);
+}
+
 public class ApiSpendTracker(
     IOrganizationRepository organizations,
     IApiSpendRepository spendRepo,

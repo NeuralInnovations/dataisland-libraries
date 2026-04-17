@@ -26,6 +26,14 @@ public interface IApiSpendRepository : IRepository
         CancellationToken ct = default);
 
     Task<ApiSpendRecord?> GetRecordAsync(string organizationId, string yearMonth, CancellationToken ct = default);
+
+    /// <summary>
+    /// Manually reset the current-month spend counter for an organisation to zero. The document
+    /// is preserved (not deleted) so the case-count trail remains queryable; only the
+    /// cumulative cost and token counters are zeroed. Used by the admin "reset" action when an
+    /// organisation has been throttled by the cap and wants to continue processing mid-month.
+    /// </summary>
+    Task ResetCurrentMonthAsync(string organizationId, string yearMonth, CancellationToken ct = default);
 }
 
 public class ApiSpendRepository : RepositoryWithIndex<ApiSpendRecord>, IApiSpendRepository
@@ -45,6 +53,22 @@ public class ApiSpendRepository : RepositoryWithIndex<ApiSpendRecord>, IApiSpend
         await Secondary
             .Find(x => x.OrganizationId == organizationId && x.YearMonth == yearMonth)
             .FirstOrDefaultAsync(ct);
+
+    public async Task ResetCurrentMonthAsync(string organizationId, string yearMonth, CancellationToken ct = default)
+    {
+        var filter = Builders<ApiSpendRecord>.Filter.And(
+            Builders<ApiSpendRecord>.Filter.Eq(x => x.OrganizationId, organizationId),
+            Builders<ApiSpendRecord>.Filter.Eq(x => x.YearMonth, yearMonth));
+
+        var update = Builders<ApiSpendRecord>.Update
+            .Set(x => x.CumulativeCostUsd, 0m)
+            .Set(x => x.PromptTokens, 0L)
+            .Set(x => x.CompletionTokens, 0L)
+            .Set(x => x.CaseCount, 0L)
+            .Set(x => x.ModifiedAt, DateTime.UtcNow);
+
+        await Collection.UpdateOneAsync(filter, update, cancellationToken: ct);
+    }
 
     public async Task<decimal> IncrementAsync(
         string organizationId,

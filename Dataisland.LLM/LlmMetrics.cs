@@ -16,6 +16,11 @@ public static class LlmMetrics
         "Total output (completion) tokens consumed by LLM calls",
         Labels);
 
+    public static readonly Counter CachedTokensTotal = Metrics.CreateCounter(
+        "llm_cached_tokens_total",
+        "Input tokens served from provider-side prompt cache (subset of prompt tokens)",
+        Labels);
+
     public static readonly Counter CostDollarsTotal = Metrics.CreateCounter(
         "llm_cost_dollars_total",
         "Estimated total cost in dollars for LLM calls",

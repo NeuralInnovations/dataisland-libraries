@@ -37,7 +37,16 @@ public record LlmResponse(
     int PromptTokens,
     int CompletionTokens,
     string Model
-);
+)
+{
+    /// <summary>
+    /// Tokens served from provider-side prompt cache (0 if no hit). Gemini reports this as
+    /// usageMetadata.cachedContentTokenCount; OpenAI as usage.prompt_tokens_details.cached_tokens.
+    /// Used to verify prompt caching is actually firing — otherwise we pay full price for the
+    /// big static prompts (search_relevant_protocol, final_recommendations_guide).
+    /// </summary>
+    public int CachedTokens { get; init; }
+}
 
 /// <summary>Typed LLM response wrapping a parsed object and token usage.</summary>
 public record LlmResponse<T>(
@@ -46,7 +55,10 @@ public record LlmResponse<T>(
     int PromptTokens,
     int CompletionTokens,
     string Model
-);
+)
+{
+    public int CachedTokens { get; init; }
+}
 
 public enum LlmResponseFormat
 {

@@ -31,14 +31,61 @@ public class GeminiProvider : ILlmProvider
             contents: contents,
             config: config);
 
+        // Prompt-level safety block: the whole request was filtered before any generation.
+        // Retrying the same model produces the same block — surface as a specific exception
+        // so LlmService can fall straight through to the Backup tier.
+        var promptBlock = response.PromptFeedback?.BlockReason;
+        if (promptBlock is not null)
+        {
+            throw new LlmContentBlockedException(
+                $"Gemini prompt blocked: reason={promptBlock} message={response.PromptFeedback?.BlockReasonMessage}");
+        }
+
+        // Candidate-level content filter: generation started but was stopped for safety/recitation/etc.
+        // Any non-STOP, non-MAX_TOKENS finish reason means the response is not usable.
+        var candidate = response.Candidates?.FirstOrDefault();
+        var finishReason = candidate?.FinishReason;
+        if (finishReason is not null
+            && finishReason != FinishReason.STOP
+            && finishReason != FinishReason.MAX_TOKENS
+            && finishReason != FinishReason.FINISH_REASON_UNSPECIFIED)
+        {
+            if (finishReason is FinishReason.SAFETY
+                or FinishReason.PROHIBITED_CONTENT
+                or FinishReason.BLOCKLIST
+                or FinishReason.SPII
+                or FinishReason.IMAGE_SAFETY
+                or FinishReason.IMAGE_PROHIBITED_CONTENT)
+            {
+                throw new LlmContentBlockedException(
+                    $"Gemini content filtered: finishReason={finishReason}");
+            }
+
+            // RECITATION, LANGUAGE, OTHER, MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL
+            throw new InvalidOperationException(
+                $"Gemini finished without usable output: finishReason={finishReason}");
+        }
+
         var text = ExtractText(response);
         var usage = response.UsageMetadata;
+
+        // Empty completion tokens with no explicit block: transient failure — raise so the
+        // LlmService retry loop (or backup fallthrough) can retry instead of returning
+        // an empty string that downstream will treat as a bad JSON parse.
+        if (usage is not null && (usage.CandidatesTokenCount ?? 0) == 0 && string.IsNullOrEmpty(text))
+        {
+            throw new InvalidOperationException(
+                $"Gemini returned empty completion (prompt_tokens={usage.PromptTokenCount}, candidates=0)");
+        }
 
         return new LlmResponse(
             Content: text,
             PromptTokens: usage?.PromptTokenCount ?? 0,
             CompletionTokens: usage?.CandidatesTokenCount ?? 0,
-            Model: request.Model);
+            Model: request.Model)
+        {
+            CachedTokens = usage?.CachedContentTokenCount ?? 0
+        };
     }
 
     public async IAsyncEnumerable<string> CompleteStreamingAsync(

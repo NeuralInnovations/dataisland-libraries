@@ -47,12 +47,30 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
     {
         await EnsureBucketAsync(bucket, ct);
 
+        // Always buffer to MemoryStream for reliable upload:
+        // 1. Guarantees Content-Length is set (no chunked transfer)
+        // 2. UseChunkEncoding=false prevents AWS SDK chunked payload signing
+        //    which SeaweedFS stores as chunk manifests instead of actual content
+        MemoryStream ms;
+        if (content is MemoryStream existing && existing.Position == 0)
+        {
+            ms = existing;
+        }
+        else
+        {
+            ms = new MemoryStream();
+            await content.CopyToAsync(ms, ct);
+            ms.Position = 0;
+        }
+
         await _client.PutObjectAsync(new PutObjectRequest
         {
             BucketName = bucket,
             Key = path,
-            InputStream = content,
-            ContentType = contentType
+            InputStream = ms,
+            ContentType = contentType,
+            UseChunkEncoding = false,
+            Headers = { ContentLength = ms.Length }
         }, ct);
     }
 

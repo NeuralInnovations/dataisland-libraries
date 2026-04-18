@@ -36,10 +36,16 @@ public class DebugAuthHandler(
             ? userIdHeader.ToString()
             : DefaultUserId;
 
+        var email = Request.Headers.TryGetValue("X-Debug-Email", out var emailHeader)
+            ? emailHeader.ToString()
+            : "debug@ni.solutions";
+
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, userId),
             new Claim(ClaimTypes.Name, "debug-user"),
+            new Claim(ClaimTypes.Email, email),
+            new Claim("email", email),
             new Claim(ClaimTypes.Role, "admin")
         };
         var identity = new ClaimsIdentity(claims, SchemeName);

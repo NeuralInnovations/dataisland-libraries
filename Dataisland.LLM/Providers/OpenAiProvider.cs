@@ -41,12 +41,26 @@ public class OpenAiProvider : ILlmProvider
             text = string.Empty;
         }
 
+        // OpenAI's OutputTokenCount INCLUDES reasoning tokens on o-series / gpt-5 models.
+        // Subtract them so CompletionTokens reflects only the visible answer and reasoning
+        // cost is tracked separately (same convention as Gemini's CandidatesTokenCount which
+        // already excludes thoughtsTokenCount).
+        var reasoningTokens = value.Usage?.OutputTokenDetails?.ReasoningTokenCount ?? 0;
+        var outputTokens = value.Usage?.OutputTokenCount ?? 0;
+        var visibleOutputTokens = outputTokens - reasoningTokens;
+        if (visibleOutputTokens < 0) visibleOutputTokens = outputTokens;
+        var cachedTokens = value.Usage?.InputTokenDetails?.CachedTokenCount ?? 0;
+
         return new LlmResponse(
             Content: text,
             PromptTokens: value.Usage?.InputTokenCount ?? 0,
-            CompletionTokens: value.Usage?.OutputTokenCount ?? 0,
+            CompletionTokens: visibleOutputTokens,
             Model: request.Model
-        );
+        )
+        {
+            CachedTokens = cachedTokens,
+            ReasoningTokens = reasoningTokens
+        };
     }
 
     public async IAsyncEnumerable<string> CompleteStreamingAsync(

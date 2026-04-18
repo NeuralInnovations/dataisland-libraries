@@ -1,3 +1,4 @@
+using Dataisland.Contracts.Shared;
 using Dataisland.Core.Domain.ValueObjects;
 using Dataisland.MongoDB.Entity;
 using MongoDB.Bson;
@@ -28,6 +29,12 @@ public class InviteLink : EntityBase
 
     [BsonElement("validationParameters")]
     public InviteValidationParameters ValidationParameters { get; set; } = new();
+
+    [BsonElement("role")]
+    public OrganizationRole Role { get; set; } = OrganizationRole.Admin;
+
+    [BsonElement("doctorId")]
+    public string? DoctorId { get; set; }
 }
 
 [BsonIgnoreExtraElements(Inherited = true)]

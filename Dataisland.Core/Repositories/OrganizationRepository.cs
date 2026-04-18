@@ -24,19 +24,19 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
         : base("organizations", provider, new OrganizationIndexes()) { }
 
     public async Task<Organization?> GetByIdAsync(string id) =>
-        await Collection.Find(x => x.Id == id).FirstOrDefaultAsync();
+        await Collection.Find(x => x.Id == id && !x.Metadata.IsDeleted).FirstOrDefaultAsync();
 
     public async Task<List<Organization>> GetByIdsAsync(IEnumerable<string> ids) =>
-        await Secondary.Find(x => ids.Contains(x.Id)).ToListAsync();
+        await Secondary.Find(x => ids.Contains(x.Id) && !x.Metadata.IsDeleted).ToListAsync();
 
     public async Task<Organization?> GetByMemberIdAsync(ObjectId userId) =>
-        await Collection.Find(x => x.MemberIds.Contains(userId)).FirstOrDefaultAsync();
+        await Collection.Find(x => x.MemberIds.Contains(userId) && !x.Metadata.IsDeleted).FirstOrDefaultAsync();
 
     public async Task<List<Organization>> GetByMemberIdAllAsync(ObjectId userId) =>
-        await Secondary.Find(x => x.MemberIds.Contains(userId)).ToListAsync();
+        await Secondary.Find(x => x.MemberIds.Contains(userId) && !x.Metadata.IsDeleted).ToListAsync();
 
     public async Task<PaginatedResult<Organization>> GetByMemberIdAllPaginatedAsync(ObjectId userId, PaginationQuery pagination) =>
-        await Secondary.Find(x => x.MemberIds.Contains(userId)).ToPaginatedAsync(pagination);
+        await Secondary.Find(x => x.MemberIds.Contains(userId) && !x.Metadata.IsDeleted).ToPaginatedAsync(pagination);
 
     public async Task<Organization> CreateAsync(Organization org)
     {
@@ -52,6 +52,7 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
 
     public async Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId)
     {
+        // GetByIdAsync already filters IsDeleted
         var org = await GetByIdAsync(orgId);
         if (org is null || !org.MemberIds.Contains(memberUserId)) return null;
         return org;

@@ -47,7 +47,7 @@ public class GlobalExceptionHandlerMiddleware(
         if (context.Response.HasStarted) return;
 
         context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = "application/json; charset=utf-8";
 
         var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
         var response = new

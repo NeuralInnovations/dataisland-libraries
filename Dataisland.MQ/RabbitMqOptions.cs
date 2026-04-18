@@ -8,6 +8,8 @@ namespace Dataisland.MQ
         public string VirtualHost { get; set; } = "/";
         public string Username { get; set; } = null!;
         public string Password { get; set; } = null!;
+        public QueueType DefaultQueueType { get; set; } = QueueType.Classic;
+        public int DeliveryLimit { get; set; } = 0;
 
         public void ApplyConnectionString()
         {

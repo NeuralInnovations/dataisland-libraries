@@ -31,6 +31,13 @@ public class ModelConfig
     /// <summary>Cost per 1K output (completion) tokens in dollars. Used for cost tracking metrics.</summary>
     public decimal OutputTokenCostPer1K { get; set; }
 
+    /// <summary>
+    /// Cost per 1K reasoning/thinking tokens in dollars. For OpenAI o-series (o1, o3, gpt-5-mini)
+    /// reasoning tokens are billed at the output rate (defaults to <see cref="OutputTokenCostPer1K"/>
+    /// when unset). Some providers offer separate pricing — set explicitly to override.
+    /// </summary>
+    public decimal ReasoningTokenCostPer1K { get; set; }
+
     // Aliases for Infisical JSON format: {"modelName":"...", "modelFamily":"..."}
     [JsonPropertyName("modelName")]
     public string? ModelName { set => Model = value ?? Model; get => null; }
@@ -46,6 +53,9 @@ public class ModelConfig
 
     [JsonPropertyName("outputTokenCost")]
     public decimal? OutputTokenCost { set { if (value.HasValue) OutputTokenCostPer1K = value.Value; } get => null; }
+
+    [JsonPropertyName("reasoningTokenCost")]
+    public decimal? ReasoningTokenCost { set { if (value.HasValue) ReasoningTokenCostPer1K = value.Value; } get => null; }
 
     internal bool IsConfigured => !string.IsNullOrEmpty(Model);
 

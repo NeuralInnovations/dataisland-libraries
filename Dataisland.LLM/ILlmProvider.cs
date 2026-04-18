@@ -46,6 +46,19 @@ public record LlmResponse(
     /// big static prompts (search_relevant_protocol, final_recommendations_guide).
     /// </summary>
     public int CachedTokens { get; init; }
+
+    /// <summary>
+    /// Hidden reasoning/thinking tokens consumed by the model. On OpenAI reasoning models
+    /// (o1, o3, gpt-5-mini, etc.) these are returned in usage.completion_tokens_details.reasoning_tokens
+    /// and billed as output tokens — often 5-100x more than the visible answer. CompletionTokens
+    /// on OpenAI intentionally excludes these so per-token metrics reflect what the model "said";
+    /// cost calculations must add ReasoningTokens * OutputTokenCostPer1K (or ReasoningTokenCostPer1K
+    /// when providers bill reasoning at a different rate).
+    ///
+    /// Gemini folds thinking tokens into CompletionTokens directly (see GeminiProvider) because it
+    /// bills them at the same rate as output and exposes them as usageMetadata.thoughtsTokenCount.
+    /// </summary>
+    public int ReasoningTokens { get; init; }
 }
 
 /// <summary>Typed LLM response wrapping a parsed object and token usage.</summary>
@@ -58,6 +71,7 @@ public record LlmResponse<T>(
 )
 {
     public int CachedTokens { get; init; }
+    public int ReasoningTokens { get; init; }
 }
 
 public enum LlmResponseFormat

@@ -27,8 +27,13 @@ public interface ILlmService
     /// Returns 0 when the model is not configured in LlmOptions or its per-1K prices are 0.
     /// Used by downstream spend-tracking (per-organisation cap enforcement, per-case cost
     /// attribution) so callers don't need to re-implement the pricing lookup themselves.
+    ///
+    /// reasoningTokens should be passed separately from completionTokens — on OpenAI o-series
+    /// and gpt-5 models reasoning is billed as output but reported separately in usage, and on
+    /// some providers it has its own pricing tier (see ModelConfig.ReasoningTokenCostPer1K).
     /// </summary>
-    decimal EstimateCostUsd(string model, int promptTokens, int completionTokens, int cachedTokens = 0);
+    decimal EstimateCostUsd(string model, int promptTokens, int completionTokens,
+        int cachedTokens = 0, int reasoningTokens = 0);
 }
 
 public enum ModelTier

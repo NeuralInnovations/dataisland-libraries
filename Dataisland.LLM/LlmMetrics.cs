@@ -21,6 +21,12 @@ public static class LlmMetrics
         "Input tokens served from provider-side prompt cache (subset of prompt tokens)",
         Labels);
 
+    public static readonly Counter ReasoningTokensTotal = Metrics.CreateCounter(
+        "llm_reasoning_tokens_total",
+        "Hidden reasoning/thinking tokens billed as output (OpenAI o-series, gpt-5) — " +
+        "excluded from llm_completion_tokens_total but folded into llm_cost_dollars_total",
+        Labels);
+
     public static readonly Counter CostDollarsTotal = Metrics.CreateCounter(
         "llm_cost_dollars_total",
         "Estimated total cost in dollars for LLM calls",

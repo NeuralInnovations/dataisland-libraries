@@ -246,7 +246,8 @@ public class LlmService : ILlmService
                     CompletionTokens: response.CompletionTokens,
                     Model: response.Model)
                 {
-                    CachedTokens = response.CachedTokens
+                    CachedTokens = response.CachedTokens,
+                    ReasoningTokens = response.ReasoningTokens
                 };
             }
             catch (BrokenCircuitException ex) when (tier != ModelTier.Backup)
@@ -363,17 +364,25 @@ public class LlmService : ILlmService
         LlmMetrics.CompletionTokensTotal.WithLabels(labels).Inc(response.CompletionTokens);
         if (response.CachedTokens > 0)
             LlmMetrics.CachedTokensTotal.WithLabels(labels).Inc(response.CachedTokens);
+        if (response.ReasoningTokens > 0)
+            LlmMetrics.ReasoningTokensTotal.WithLabels(labels).Inc(response.ReasoningTokens);
         LlmMetrics.RequestsTotal.WithLabels(response.Model, tier, config.Provider, "success").Inc();
         LlmMetrics.RequestDurationSeconds.WithLabels(labels).Observe(elapsed.TotalSeconds);
 
-        if (config.InputTokenCostPer1K > 0 || config.OutputTokenCostPer1K > 0)
+        if (config.InputTokenCostPer1K > 0 || config.OutputTokenCostPer1K > 0 || config.ReasoningTokenCostPer1K > 0)
         {
             // Cached input is ~25% of normal price on Gemini / ~50% on OpenAI; use 50% as a
             // conservative blended factor for the "billable" input calculation. This keeps the
             // tracked cost in the right ballpark without plumbing per-provider discount factors.
             var billablePromptTokens = response.PromptTokens - (response.CachedTokens / 2);
+            // Reasoning tokens billed at the explicit ReasoningTokenCostPer1K when configured,
+            // otherwise fall back to the output rate (OpenAI o-series, gpt-5).
+            var reasoningRate = config.ReasoningTokenCostPer1K > 0
+                ? config.ReasoningTokenCostPer1K
+                : config.OutputTokenCostPer1K;
             var cost = (decimal)billablePromptTokens / 1000m * config.InputTokenCostPer1K
-                     + (decimal)response.CompletionTokens / 1000m * config.OutputTokenCostPer1K;
+                     + (decimal)response.CompletionTokens / 1000m * config.OutputTokenCostPer1K
+                     + (decimal)response.ReasoningTokens / 1000m * reasoningRate;
             LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)cost);
         }
     }
@@ -388,7 +397,8 @@ public class LlmService : ILlmService
         _ => _options.Simple
     };
 
-    public decimal EstimateCostUsd(string model, int promptTokens, int completionTokens, int cachedTokens = 0)
+    public decimal EstimateCostUsd(string model, int promptTokens, int completionTokens,
+        int cachedTokens = 0, int reasoningTokens = 0)
     {
         // Lookup is by exact model-name match so the same estimator works regardless of which
         // tier the call was routed to (and across fallbacks between tiers). Match against every
@@ -403,8 +413,15 @@ public class LlmService : ILlmService
         var billablePrompt = promptTokens - (cachedTokens / 2);
         if (billablePrompt < 0) billablePrompt = 0;
 
+        // Reasoning tokens default to the output rate when no explicit reasoning rate is set —
+        // matches OpenAI's billing model for o-series and gpt-5 (reasoning priced as output).
+        var reasoningRate = config.ReasoningTokenCostPer1K > 0
+            ? config.ReasoningTokenCostPer1K
+            : config.OutputTokenCostPer1K;
+
         return (decimal)billablePrompt / 1000m * config.InputTokenCostPer1K
-             + (decimal)completionTokens / 1000m * config.OutputTokenCostPer1K;
+             + (decimal)completionTokens / 1000m * config.OutputTokenCostPer1K
+             + (decimal)reasoningTokens / 1000m * reasoningRate;
     }
 
     private ModelConfig? FindConfigByModel(string model)

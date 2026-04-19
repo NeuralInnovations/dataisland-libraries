@@ -33,6 +33,19 @@ public class OrganizationProfile : DescriptionProfile
     [BsonElement("apiSpendCapUsd")]
     [BsonRepresentation(BsonType.Decimal128)]
     public decimal ApiSpendCapUsd { get; set; } = 500m;
+
+    /// <summary>
+    /// Per-case hard-stop cost cap (USD). If a single case's accumulated LLM spend exceeds
+    /// this value during processing, remaining LLM calls are aborted and the case is returned
+    /// with an error. Guards against runaway single-case costs — e.g., a pathological input
+    /// that keeps retrying or a model loop that burns through tokens. Defaults to 0 (disabled)
+    /// because a reasonable value depends on expected case complexity; developers should set
+    /// this to ~5-10× the observed average per-case cost to catch outliers without throttling
+    /// legitimate long cases.
+    /// </summary>
+    [BsonElement("perCaseCostCapUsd")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal PerCaseCostCapUsd { get; set; } = 0m;
 }
 
 public class UserProfile : BasicProfile

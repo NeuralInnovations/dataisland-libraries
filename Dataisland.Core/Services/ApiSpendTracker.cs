@@ -25,6 +25,13 @@ public interface IApiSpendTracker
         long promptTokens,
         long completionTokens,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Look up the per-case hard-stop cost cap (USD) configured on the organisation.
+    /// Returns 0 when the cap is disabled or when the organisation cannot be resolved —
+    /// in both cases the caller should treat it as "no cap".
+    /// </summary>
+    Task<decimal> GetPerCaseCostCapUsdAsync(string organizationId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -50,6 +57,9 @@ public class NullApiSpendTracker(ILogger<NullApiSpendTracker> logger) : IApiSpen
     }
 
     public Task<decimal> RecordAsync(string organizationId, decimal costUsd, long promptTokens, long completionTokens, CancellationToken ct = default)
+        => Task.FromResult(0m);
+
+    public Task<decimal> GetPerCaseCostCapUsdAsync(string organizationId, CancellationToken ct = default)
         => Task.FromResult(0m);
 }
 
@@ -107,6 +117,12 @@ public class ApiSpendTracker(
             organizationId, yearMonth, costUsd, newTotal, promptTokens, completionTokens);
 
         return newTotal;
+    }
+
+    public async Task<decimal> GetPerCaseCostCapUsdAsync(string organizationId, CancellationToken ct = default)
+    {
+        var org = await organizations.GetByIdAsync(organizationId);
+        return org?.Profile.PerCaseCostCapUsd ?? 0m;
     }
 
     private static string CurrentYearMonth() => DateTime.UtcNow.ToString("yyyy-MM");

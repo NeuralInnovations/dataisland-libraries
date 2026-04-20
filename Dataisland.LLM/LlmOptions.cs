@@ -70,9 +70,6 @@ public class ModelConfig
     [JsonPropertyName("reasoningTokenCost")]
     public decimal? ReasoningTokenCost { set { if (value.HasValue) ReasoningTokenCostPer1K = value.Value; } get => null; }
 
-    [JsonPropertyName("thinkingBudget")]
-    public int? ThinkingBudgetAlias { set { if (value.HasValue) ThinkingBudget = value.Value; } get => null; }
-
     internal bool IsConfigured => !string.IsNullOrEmpty(Model);
 
     private static readonly JsonSerializerOptions JsonOptions = new()

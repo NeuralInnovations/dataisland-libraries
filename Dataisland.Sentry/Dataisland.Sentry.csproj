@@ -14,6 +14,7 @@
            logged exceptions and error-level logs to Sentry. -->
       <PackageReference Include="Sentry.Serilog" Version="5.11.2" />
       <PackageReference Include="Serilog" Version="4.2.0" />
+      <PackageReference Include="Serilog.Enrichers.Span" Version="3.1.0" />
       <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
       <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
       <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />

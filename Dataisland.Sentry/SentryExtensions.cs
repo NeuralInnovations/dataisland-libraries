@@ -7,6 +7,7 @@ using Sentry;
 using Sentry.AspNetCore;
 using Sentry.Serilog;
 using Serilog;
+using Serilog.Enrichers.Span;
 using Serilog.Events;
 
 namespace Dataisland.Sentry;
@@ -99,8 +100,9 @@ public static class SentryExtensions
     {
         var cfg = new LoggerConfiguration()
             .ReadFrom.Configuration(configuration)
+            .Enrich.WithSpan()
             .WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} trace_id={TraceId} span_id={SpanId}{NewLine}{Exception}");
 
         if (hasDsn)
         {

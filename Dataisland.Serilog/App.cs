@@ -1,4 +1,5 @@
 using Serilog;
+using Serilog.Enrichers.Span;
 
 namespace Dataisland.Serilog;
 
@@ -7,7 +8,9 @@ public static class App
     public static void RegisterExitOnUnhandledException()
     {
         Log.Logger = new LoggerConfiguration()
-            .WriteTo.Console()
+            .Enrich.WithSpan()
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} trace_id={TraceId} span_id={SpanId} {Properties:j}{NewLine}{Exception}")
             .CreateBootstrapLogger();
 
         Log.Information("Starting up!");

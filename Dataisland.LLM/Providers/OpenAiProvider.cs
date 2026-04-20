@@ -84,6 +84,12 @@ public class OpenAiProvider : ILlmProvider
         var options = new ChatCompletionOptions
         {
             Temperature = request.Temperature,
+            // Cap reasoning effort on o-series/gpt-5 models. These prompts are classifiers,
+            // extractors, and formatters — the chain-of-thought doesn't improve output quality
+            // but burns reasoning tokens priced at the output rate. Non-reasoning models
+            // ignore this field. Low is the minimum this SDK version exposes; if the API
+            // later adds "minimal", bump accordingly.
+            ReasoningEffortLevel = ChatReasoningEffortLevel.Low,
         };
         if (request.MaxTokens.HasValue)
             options.MaxOutputTokenCount = request.MaxTokens.Value;

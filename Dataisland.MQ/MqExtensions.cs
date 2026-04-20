@@ -53,8 +53,17 @@ namespace Dataisland.MQ
 
                         if (attribute.RetryCount > 0)
                             e.UseMessageRetry(a =>
-                                a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
-                            );
+                            {
+                                a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds));
+                                // Don't retry when the consumer's cancellation token has already
+                                // tripped (pod drain, KEDA scale-down, bus stop). The retry's own
+                                // Task.Delay uses the same ct and throws immediately, so retries
+                                // burn in microseconds and the message lands in _error anyway —
+                                // just noisier. Skipping retry on OCE keeps the log clean; the
+                                // raised StopTimeout on the bus gives in-flight consumers a
+                                // chance to finish cleanly before the hard cancel.
+                                a.Ignore<OperationCanceledException>();
+                            });
 
                         // Only wire UseDelayedRedelivery when the broker has the
                         // rabbitmq_delayed_message_exchange plugin — without it, the first
@@ -108,6 +117,16 @@ namespace Dataisland.MQ
             Action<IConfigureConsumers> configure
         )
         {
+            // Default MassTransitHostOptions.StopTimeout is 30s. Medical case processing can
+            // run 1-5 min; at default, a pod drain hard-cancels in-flight consumers, their
+            // OCE bubbles to _error queues. Give the bus up to 5 min to drain. Pod's
+            // terminationGracePeriodSeconds must be >= this for k8s to honour it.
+            services.Configure<MassTransitHostOptions>(o =>
+            {
+                o.WaitUntilStarted = true;
+                o.StopTimeout = TimeSpan.FromMinutes(5);
+            });
+
             services.AddMassTransit(mt =>
             {
                 var impl = new ConfigureConsumersImpl(mt);

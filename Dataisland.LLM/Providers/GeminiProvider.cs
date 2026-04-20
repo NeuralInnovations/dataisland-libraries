@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Google.GenAI;
 using Google.GenAI.Types;
 using Microsoft.Extensions.Logging;
@@ -159,6 +160,17 @@ public class GeminiProvider : ILlmProvider
         if (request.ResponseFormat is LlmResponseFormat.Json or LlmResponseFormat.JsonSchema)
         {
             config.ResponseMimeType = "application/json";
+        }
+
+        // Gemini 2.x supports a Draft-2020-12 JSON Schema subset via ResponseJsonSchema. When
+        // the caller provided a schema, pass it straight through — this is strict structured
+        // output, so the model's response parses on first try (no retry loop, no prompt
+        // "please emit JSON" hack in the system message). Deserialize to JsonElement so the
+        // SDK's own serializer round-trips the schema JSON cleanly to the API.
+        if (request.ResponseFormat == LlmResponseFormat.JsonSchema
+            && !string.IsNullOrWhiteSpace(request.JsonSchema))
+        {
+            config.ResponseJsonSchema = JsonSerializer.Deserialize<JsonElement>(request.JsonSchema);
         }
 
         return config;

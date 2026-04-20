@@ -346,8 +346,14 @@ public class LlmService : ILlmService
 
     private static bool SupportsJsonSchema(ModelConfig config)
     {
-        // OpenAI, Azure OpenAI, and Anthropic via OpenAI-compatible endpoints support structured outputs
-        return config.Provider.ToLowerInvariant() is "openai" or "azure" or "gpt" or "anthropic";
+        // OpenAI, Azure, Anthropic via OpenAI-compat endpoints: native structured outputs.
+        // Gemini 2.x: supports ResponseJsonSchema (GenerateContentConfig) — the subset of
+        // JSON Schema covers every construct JsonSchemaGenerator emits (type, properties,
+        // required, additionalProperties, items, enum). Enabling it here avoids the
+        // "unparseable JSON" retry loop on Gemini tiers.
+        return config.Provider.ToLowerInvariant()
+            is "openai" or "azure" or "gpt" or "anthropic"
+            or "gemini" or "google";
     }
 
     public async IAsyncEnumerable<string> CompleteStreamingAsync(

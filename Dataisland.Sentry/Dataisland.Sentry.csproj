@@ -10,6 +10,12 @@
     <ItemGroup>
       <PackageReference Include="Sentry.AspNetCore" Version="5.11.2" />
       <PackageReference Include="Sentry.OpenTelemetry" Version="5.11.2" />
+      <!-- Serilog sink so worker services (which don't run ASP.NET middleware) still report
+           logged exceptions and error-level logs to Sentry. -->
+      <PackageReference Include="Sentry.Serilog" Version="5.11.2" />
+      <PackageReference Include="Serilog" Version="4.2.0" />
+      <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+      <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
     </ItemGroup>
 
 </Project>

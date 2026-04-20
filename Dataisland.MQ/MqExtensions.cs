@@ -56,7 +56,14 @@ namespace Dataisland.MQ
                                 a.Interval(attribute.RetryCount, TimeSpan.FromSeconds(attribute.RetryIntervalInSeconds))
                             );
 
-                        if (attribute.UseDelayedRedelivery && attribute.RedeliveryIntervalsSeconds.Length > 0)
+                        // Only wire UseDelayedRedelivery when the broker has the
+                        // rabbitmq_delayed_message_exchange plugin — without it, the first
+                        // use closes the channel with PRECONDITION_FAILED and every subsequent
+                        // message faults. The per-consumer attribute expresses intent; the
+                        // broker-level flag gates actual activation.
+                        if (options.DelayedRedeliveryEnabled
+                            && attribute.UseDelayedRedelivery
+                            && attribute.RedeliveryIntervalsSeconds.Length > 0)
                         {
                             e.UseDelayedRedelivery(r => r.Intervals(
                                 attribute.RedeliveryIntervalsSeconds.Select(s => TimeSpan.FromSeconds(s)).ToArray()

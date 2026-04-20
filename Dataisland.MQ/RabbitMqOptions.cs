@@ -11,6 +11,16 @@ namespace Dataisland.MQ
         public QueueType DefaultQueueType { get; set; } = QueueType.Classic;
         public int DeliveryLimit { get; set; } = 0;
 
+        /// <summary>
+        /// Enable MassTransit's <c>UseDelayedRedelivery</c> feature, which requires the
+        /// <c>rabbitmq_delayed_message_exchange</c> plugin on the broker. When the plugin is
+        /// missing the AMQP channel gets closed with PRECONDITION_FAILED on first use, which
+        /// cascades into T-FAULT errors per message. Leave false when you can't install the
+        /// plugin; the per-consumer <c>RetryCount</c> / <c>RetryIntervalInSeconds</c> provides
+        /// in-memory retries regardless. Set via <c>RabbitMq__DelayedRedeliveryEnabled=true</c>.
+        /// </summary>
+        public bool DelayedRedeliveryEnabled { get; set; } = false;
+
         public void ApplyConnectionString()
         {
             if (string.IsNullOrEmpty(ConnectionString)) return;

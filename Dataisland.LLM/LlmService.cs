@@ -75,8 +75,12 @@ public class LlmService : ILlmService
         var tierName = tier.ToString();
         var sw = Stopwatch.StartNew();
 
-        // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
-        var retryDelays = new[] { 5, 15, 30 }; // seconds — Gemini quota resets ~47s, need longer waits
+        // Retry with backoff on the PRIMARY tier first, then fall back to Backup.
+        // Tight budget: one retry on primary (2 attempts total), no retries on backup.
+        // Each retry re-sends the full prompt — the old {5,15,30} schedule meant one flaky call
+        // could bill up to 8 prompts before giving up. A single retry catches transient blips
+        // (quota, brief 5xx) while preventing runaway cost when a model is truly unhappy.
+        var retryDelays = tier == ModelTier.Backup ? Array.Empty<int>() : new[] { 5 };
 
         for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
@@ -96,6 +100,14 @@ public class LlmService : ILlmService
                     _logger.LogInformation("LLM call succeeded for tier {Tier} on retry attempt {Attempt}", tier, attempt);
 
                 return response;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller (MassTransit consumer, pod shutdown, KEDA scale-down) asked us to stop.
+                // Do NOT retry and do NOT fall back to Backup — that just burns more prompts on
+                // work the caller already abandoned. Rethrow immediately; the case will be
+                // redelivered by MassTransit on the next consumer if applicable.
+                throw;
             }
             catch (BrokenCircuitException ex) when (tier != ModelTier.Backup)
             {
@@ -188,8 +200,9 @@ public class LlmService : ILlmService
         var tierName = tier.ToString();
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        // Retry with exponential backoff on the PRIMARY tier first, then fall back to Backup
-        var retryDelays = new[] { 5, 15, 30 }; // seconds — Gemini quota resets ~47s, need longer waits
+        // See note on the non-generic overload: tight retry budget (1 retry on primary, none on
+        // backup) so a flaky call can't multiply prompt cost by 8×.
+        var retryDelays = tier == ModelTier.Backup ? Array.Empty<int>() : new[] { 5 };
 
         for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
         {
@@ -249,6 +262,12 @@ public class LlmService : ILlmService
                     CachedTokens = response.CachedTokens,
                     ReasoningTokens = response.ReasoningTokens
                 };
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Caller abandoned the work (MassTransit consumer stopping, pod drain). Don't
+                // retry, don't fall back — that just burns more prompts on a cancelled case.
+                throw;
             }
             catch (BrokenCircuitException ex) when (tier != ModelTier.Backup)
             {

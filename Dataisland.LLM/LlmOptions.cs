@@ -38,6 +38,19 @@ public class ModelConfig
     /// </summary>
     public decimal ReasoningTokenCostPer1K { get; set; }
 
+    /// <summary>
+    /// Gemini "thinking" budget (tokens). Only used by the Gemini provider.
+    /// <list type="bullet">
+    /// <item><c>null</c> (default) — treated as 0. Thinking is opt-in because it bills at the output rate.</item>
+    /// <item><c>0</c> — disabled. Works on Flash / Flash-Lite. Pro ignores 0 and enforces a 128-token
+    ///   mandatory minimum (Google API behaviour, not ours).</item>
+    /// <item>Positive int — explicit budget. Per Google docs: Pro min=128, Flash min=0, max=32768.</item>
+    /// </list>
+    /// Recommended Pro values when you opt in: 512 for extraction/classification,
+    /// 1024 for clinical reasoning, 2048 when outputs are consistently shallow.
+    /// </summary>
+    public int? ThinkingBudget { get; set; }
+
     // Aliases for Infisical JSON format: {"modelName":"...", "modelFamily":"..."}
     [JsonPropertyName("modelName")]
     public string? ModelName { set => Model = value ?? Model; get => null; }
@@ -56,6 +69,9 @@ public class ModelConfig
 
     [JsonPropertyName("reasoningTokenCost")]
     public decimal? ReasoningTokenCost { set { if (value.HasValue) ReasoningTokenCostPer1K = value.Value; } get => null; }
+
+    [JsonPropertyName("thinkingBudget")]
+    public int? ThinkingBudgetAlias { set { if (value.HasValue) ThinkingBudget = value.Value; } get => null; }
 
     internal bool IsConfigured => !string.IsNullOrEmpty(Model);
 

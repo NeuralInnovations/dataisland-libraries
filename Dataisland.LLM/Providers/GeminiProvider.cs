@@ -9,6 +9,7 @@ public class GeminiProvider : ILlmProvider
 {
     private readonly Client _client;
     private readonly string _model;
+    private readonly int _thinkingBudget;
     private readonly ILogger<GeminiProvider> _logger;
 
     public GeminiProvider(ModelConfig config, ILogger<GeminiProvider> logger)
@@ -16,14 +17,29 @@ public class GeminiProvider : ILlmProvider
         _logger = logger;
         _model = config.Model;
         _client = new Client(apiKey: config.ApiKey);
+        _thinkingBudget = ResolveThinkingBudget(config.ThinkingBudget, config.Model);
+
+        _logger.LogInformation(
+            "Gemini provider: model={Model} thinkingBudget={Budget}", config.Model, _thinkingBudget);
 
         if (!string.IsNullOrWhiteSpace(config.BaseUrl))
             _logger.LogWarning("BaseUrl is set for Gemini provider but Google.GenAI SDK does not support custom endpoints — it will be ignored");
     }
 
+    /// <summary>
+    /// Decide the ThinkingBudget to pass to Google.GenAI.
+    /// Default is ALWAYS 0 (disabled) — opting in to thinking is an explicit decision because
+    /// it bills at the output rate and routinely dominates per-call cost on Pro. To enable,
+    /// set <c>thinkingBudget</c> in the model config JSON (see LlmOptions.ThinkingBudget).
+    /// Note: Gemini 2.5 Pro ignores budget=0 and enforces a 128-token mandatory minimum — that's
+    /// Google's behaviour, not ours; our "off" is still as off as the API allows.
+    /// </summary>
+    internal static int ResolveThinkingBudget(int? configured, string model)
+        => configured ?? 0;
+
     public async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default)
     {
-        var config = BuildConfig(request);
+        var config = BuildConfig(request, _thinkingBudget);
         var contents = BuildContents(request);
 
         var response = await _client.Models.GenerateContentAsync(
@@ -98,7 +114,7 @@ public class GeminiProvider : ILlmProvider
     public async IAsyncEnumerable<string> CompleteStreamingAsync(
         LlmRequest request, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var config = BuildConfig(request);
+        var config = BuildConfig(request, _thinkingBudget);
         var contents = BuildContents(request);
 
         await foreach (var chunk in _client.Models.GenerateContentStreamAsync(
@@ -112,17 +128,18 @@ public class GeminiProvider : ILlmProvider
         }
     }
 
-    internal static GenerateContentConfig BuildConfig(LlmRequest request)
+    internal static GenerateContentConfig BuildConfig(LlmRequest request, int thinkingBudget)
     {
         var config = new GenerateContentConfig
         {
             Temperature = request.Temperature,
-            // Disable Gemini 2.5 Flash "dynamic thinking" — these prompts are deterministic
-            // classifiers, query generators, and filters; thinking adds no quality but is billed
-            // as output tokens. Note: Gemini 2.5 Pro ignores budget=0 (mandatory thinking).
+            // Default: 0 (thinking disabled). Explicit opt-in via ModelConfig.ThinkingBudget.
+            // Pro ignores 0 and enforces a 128-token mandatory minimum — that's Google's API,
+            // not ours. If you want more thinking on Pro for a specific tier, set thinkingBudget
+            // in that tier's secret JSON (e.g. 1024 for clinical reasoning, 2048 for ambiguous).
             ThinkingConfig = new ThinkingConfig
             {
-                ThinkingBudget = 0,
+                ThinkingBudget = thinkingBudget,
                 IncludeThoughts = false
             }
         };

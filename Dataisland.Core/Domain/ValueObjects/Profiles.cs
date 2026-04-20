@@ -46,6 +46,15 @@ public class OrganizationProfile : DescriptionProfile
     [BsonElement("perCaseCostCapUsd")]
     [BsonRepresentation(BsonType.Decimal128)]
     public decimal PerCaseCostCapUsd { get; set; } = 0m;
+
+    /// <summary>
+    /// When set, dispatching of queued medical cases / anamnesis / analytics for this organisation
+    /// is paused — the dispatcher workers skip the org on each tick. Already-in-flight MQ messages
+    /// complete normally; new submissions still land in the queue (Status=InQueue) and flush on
+    /// resume. Null = running. Used as the admin "stop processing" kill switch.
+    /// </summary>
+    [BsonElement("processingPausedAt")]
+    public DateTime? ProcessingPausedAt { get; set; }
 }
 
 public class UserProfile : BasicProfile

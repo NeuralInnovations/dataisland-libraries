@@ -15,10 +15,10 @@ public static class SentryExtensions
 {
     /// <summary>
     /// Wire Sentry into an ASP.NET Core service (WebApplicationBuilder). Sentry's middleware
-    /// captures unhandled exceptions from the request pipeline. Also registers Serilog with a
-    /// Sentry sink so log events at Error+ are forwarded as Sentry events and Information+ are
-    /// attached as breadcrumbs. No-op (with a warning logged at startup) when the <c>Sentry</c>
-    /// config section is missing or the DSN is blank — safe for local dev.
+    /// captures unhandled exceptions from the request pipeline. Also reconfigures the static
+    /// <c>Log.Logger</c> so <c>builder.Host.UseSerilog()</c> (which uses the static logger)
+    /// forwards Error+ events to Sentry too. No-op on the Sentry side when the DSN is blank;
+    /// logging stays intact either way.
     /// </summary>
     public static IWebHostBuilder UseSentry(
         this WebApplicationBuilder builder,
@@ -27,18 +27,15 @@ public static class SentryExtensions
     )
     {
         var options = builder.Configuration.GetSection("Sentry").Get<SentryOptions>();
+        var hasDsn = options is not null && !string.IsNullOrWhiteSpace(options.Dsn);
 
-        // Register Serilog with the Sentry sink. Sentry.AspNetCore's automatic capture catches
-        // the request pipeline; the Serilog sink catches everything else (workers, consumers,
-        // background services inside Service.Api) that logs at Error or above.
-        builder.Services.AddSerilog((_, cfg) =>
-            ConfigureSerilog(cfg, builder.Configuration, options, serverName, alreadyInitialized: true));
+        ReconfigureStaticLogger(builder.Configuration, options, hasDsn, serverName);
 
         return builder.WebHost.UseSentry(sentry =>
         {
-            if (options is not null && !string.IsNullOrWhiteSpace(options.Dsn))
+            if (hasDsn)
             {
-                sentry.Dsn = options.Dsn;
+                sentry.Dsn = options!.Dsn;
                 sentry.Environment = options.Environment;
                 sentry.ServerName = serverName;
                 sentry.TracesSampleRate = 1;
@@ -52,24 +49,25 @@ public static class SentryExtensions
 
     /// <summary>
     /// Wire Sentry into a worker service (IHostApplicationBuilder — used by
-    /// Host.CreateApplicationBuilder). There's no request pipeline here, so Sentry is driven
-    /// entirely through the Serilog sink: Error+ logs become Sentry events, Information+
-    /// logs become breadcrumbs. Replaces the service's own <c>AddSerilog()</c> call — do not
-    /// call both. No-op when the DSN is missing.
+    /// Host.CreateApplicationBuilder). Calls <c>SentrySdk.Init</c> when a DSN is configured and
+    /// reconfigures the static <c>Log.Logger</c> to include a Sentry sink. The caller should
+    /// still invoke <c>builder.Services.AddSerilog()</c> afterwards to register the logger with
+    /// the DI container — this method calls it for you, so don't call it twice.
     /// </summary>
     public static IHostApplicationBuilder UseSentry(
         this IHostApplicationBuilder builder,
         string serverName)
     {
         var options = builder.Configuration.GetSection("Sentry").Get<SentryOptions>();
+        var hasDsn = options is not null && !string.IsNullOrWhiteSpace(options.Dsn);
 
-        if (options is not null && !string.IsNullOrWhiteSpace(options.Dsn))
+        if (hasDsn)
         {
             // Initialize the global Sentry client once. The Serilog sink below is configured
             // with InitializeSdk=false so it reuses this client rather than starting a second.
             SentrySdk.Init(sentry =>
             {
-                sentry.Dsn = options.Dsn;
+                sentry.Dsn = options!.Dsn;
                 sentry.Environment = options.Environment;
                 sentry.ServerName = serverName;
                 sentry.TracesSampleRate = 1;
@@ -78,39 +76,47 @@ public static class SentryExtensions
             });
         }
 
-        builder.Services.AddSerilog((_, cfg) =>
-            ConfigureSerilog(cfg, builder.Configuration, options, serverName, alreadyInitialized: true));
+        ReconfigureStaticLogger(builder.Configuration, options, hasDsn, serverName);
+
+        // Register the static Log.Logger with DI — matches the pre-Sentry pattern
+        // (services used to call this directly with no args).
+        builder.Services.AddSerilog();
 
         return builder;
     }
 
-    private static void ConfigureSerilog(
-        LoggerConfiguration cfg,
+    /// <summary>
+    /// Rebuild the static <c>Log.Logger</c> so Serilog sees appsettings' <c>Serilog</c> section
+    /// plus a guaranteed Console sink (the worker appsettings' Serilog sections define only
+    /// MinimumLevel — if we relied solely on ReadFrom.Configuration we'd end up with a
+    /// sink-less logger and silent startup). When a DSN is present, also append the Sentry sink.
+    /// </summary>
+    private static void ReconfigureStaticLogger(
         IConfiguration configuration,
         SentryOptions? sentryOptions,
-        string serverName,
-        bool alreadyInitialized)
+        bool hasDsn,
+        string serverName)
     {
-        // ReadFrom.Configuration is what the original `builder.Services.AddSerilog()` relied on
-        // to pick up the appsettings.yml Serilog section (MinimumLevel overrides, etc). Keep
-        // that behaviour — we only ADD a sink, we don't replace the console/enrichment pipeline.
-        cfg.ReadFrom.Configuration(configuration);
+        var cfg = new LoggerConfiguration()
+            .ReadFrom.Configuration(configuration)
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
 
-        if (sentryOptions is null || string.IsNullOrWhiteSpace(sentryOptions.Dsn))
-            return;
-
-        cfg.WriteTo.Sentry(s =>
+        if (hasDsn)
         {
-            // InitializeSdk=false reuses the already-init'd SentrySdk (either from
-            // Sentry.AspNetCore in the web app or from SentrySdk.Init in the worker path).
-            // Double-init logs a warning and keeps the first client; explicitly setting this
-            // skips the noise.
-            s.InitializeSdk = !alreadyInitialized;
-            s.Dsn = sentryOptions.Dsn;
-            s.Environment = sentryOptions.Environment;
-            s.ServerName = serverName;
-            s.MinimumEventLevel = LogEventLevel.Error;
-            s.MinimumBreadcrumbLevel = LogEventLevel.Information;
-        });
+            cfg.WriteTo.Sentry(s =>
+            {
+                // InitializeSdk=false reuses the already-init'd SentrySdk (either from
+                // Sentry.AspNetCore in the web app or from SentrySdk.Init in the worker path).
+                s.InitializeSdk = false;
+                s.Dsn = sentryOptions!.Dsn;
+                s.Environment = sentryOptions.Environment;
+                s.ServerName = serverName;
+                s.MinimumEventLevel = LogEventLevel.Error;
+                s.MinimumBreadcrumbLevel = LogEventLevel.Information;
+            });
+        }
+
+        Log.Logger = cfg.CreateLogger();
     }
 }

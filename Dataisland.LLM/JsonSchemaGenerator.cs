@@ -26,6 +26,59 @@ public static class JsonSchemaGenerator
         });
     }
 
+    /// <summary>
+    /// Produce a per-request schema string by injecting an <c>"enum"</c> constraint into the
+    /// named top-level properties of <paramref name="baseSchema"/>. Used when the set of
+    /// allowed values is only known at call time (e.g. the candidate file IDs for Phase C
+    /// file-selection) — the type-level schema permits any string, this narrows it to the
+    /// actual whitelist so the model can't hallucinate a value outside it.
+    ///
+    /// Returns a fresh JSON string; <paramref name="baseSchema"/> (and the module cache) is
+    /// untouched.
+    /// </summary>
+    public static string ApplyPropertyEnums(
+        string baseSchema,
+        IReadOnlyDictionary<string, string[]> propertyEnums)
+    {
+        if (propertyEnums.Count == 0) return baseSchema;
+
+        using var doc = JsonDocument.Parse(baseSchema);
+        var root = JsonElementToMutable(doc.RootElement) as Dictionary<string, object?>
+            ?? throw new InvalidOperationException("Schema root must be an object.");
+
+        if (!root.TryGetValue("properties", out var propsObj)
+            || propsObj is not Dictionary<string, object?> props)
+        {
+            return baseSchema;
+        }
+
+        foreach (var (propName, allowed) in propertyEnums)
+        {
+            if (!props.TryGetValue(propName, out var propSchemaObj)
+                || propSchemaObj is not Dictionary<string, object?> propSchema)
+            {
+                continue;
+            }
+            propSchema["enum"] = allowed;
+        }
+
+        return JsonSerializer.Serialize(root, SerializerOptions);
+    }
+
+    private static object? JsonElementToMutable(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => element.EnumerateObject()
+            .ToDictionary(p => p.Name, p => JsonElementToMutable(p.Value)),
+        JsonValueKind.Array => element.EnumerateArray()
+            .Select(JsonElementToMutable).ToList(),
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.Number => element.TryGetInt64(out var l) ? (object)l : element.GetDouble(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Null => null,
+        _ => null
+    };
+
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         WriteIndented = false,

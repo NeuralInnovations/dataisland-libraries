@@ -23,10 +23,18 @@ public interface ILlmService
     /// otherwise falls back to JSON mode + prompt-based schema instruction.
     /// See <see cref="CompleteAsync(ModelTier, IReadOnlyList{LlmMessage}, string?, float?, int?, TimeSpan?, CancellationToken)"/>
     /// for the semantics of <paramref name="timeout"/>.
+    ///
+    /// <paramref name="propertyEnums"/> narrows a field to a per-request allowlist — useful
+    /// when the valid values are only known at call time (e.g. the candidate file IDs in
+    /// Phase C file-selection). Keys are the camelCase property names of <typeparamref name="T"/>.
+    /// On providers that support strict structured outputs (OpenAI, Gemini 2.x) the model
+    /// physically cannot emit a value outside the allowlist; on others the restriction is
+    /// expressed only via the schema text in the system prompt.
     /// </summary>
     Task<LlmResponse<T>> CompleteAsync<T>(ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         TimeSpan? timeout = null,
+        IReadOnlyDictionary<string, string[]>? propertyEnums = null,
         CancellationToken ct = default) where T : class;
 
     IAsyncEnumerable<string> CompleteStreamingAsync(ModelTier tier, IReadOnlyList<LlmMessage> messages,

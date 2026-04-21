@@ -16,6 +16,18 @@ public class IndexMappingBuilder
         return this;
     }
 
+    public IndexMappingBuilder TextWithKeyword(string fieldName, string keywordSubField = "keyword")
+    {
+        Properties.Add(fieldName, new TextProperty
+        {
+            Fields = new Properties
+            {
+                { keywordSubField, new KeywordProperty() }
+            }
+        });
+        return this;
+    }
+
     public IndexMappingBuilder Keyword(string fieldName)
     {
         Properties.Add(fieldName, new KeywordProperty());

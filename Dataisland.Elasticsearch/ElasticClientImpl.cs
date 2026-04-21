@@ -1,5 +1,6 @@
 using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Core.Bulk;
+using Elastic.Clients.Elasticsearch.Core.Search;
 using Elastic.Clients.Elasticsearch.IndexManagement;
 using Elastic.Clients.Elasticsearch.Mapping;
 using Elastic.Clients.Elasticsearch.QueryDsl;
@@ -222,55 +223,80 @@ public class ElasticClientImpl : IElasticClient
     public async Task<IReadOnlyList<SearchHit<T>>> SearchByMetadataAsync<T>(
         string[] indices, string[] queries, CancellationToken ct = default)
     {
+        const int metadataResultWindow = 250;
+
+        var normalizedQueries = queries
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Select(q => q.Trim())
+            .Where(q => !q.Equals("Output:", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (normalizedQueries.Length == 0)
+            return [];
+
         // Extract ICD-10 codes from queries for exact keyword matching
-        var icdCodes = queries.Where(q => IcdCodePattern.IsMatch(q.Trim())).ToArray();
-        // Extract ICD-10 root codes (e.g., J20.9 → J20) for prefix matching
+        var icdCodes = normalizedQueries.Where(q => IcdCodePattern.IsMatch(q)).ToArray();
+        // Extract ICD-10 root codes (e.g., J20.9 -> J20) for prefix matching
         var icdRoots = icdCodes.Select(c => c.Contains('.') ? c.Split('.')[0] : c).Distinct().ToArray();
 
         var response = await _client.SearchAsync<T>(s => s
             .Index(string.Join(",", indices))
-            .Size(100)
+            .Size(metadataResultWindow)
+            // De-duplicate at Elasticsearch level: one top hit per file_id.
+            .Collapse(new FieldCollapse { Field = new Field("file_id") })
             .Query(q => q
                 .Bool(b => b
                     .Should(
-                        // Per-query fuzzy matching across text fields
-                        queries.Select(query =>
+                        // Per-query matching across file-level signals first, chunk text second.
+                        normalizedQueries.Select(query =>
                             (Action<QueryDescriptor<T>>)(sq =>
                                 sq.Bool(bq => bq
                                     .Should(
-                                        // Exact/fuzzy match on metadata (highest boost — contains ICD codes, disease names)
+                                        // Metadata is the strongest file-level signal.
                                         smm => smm.Match(m => m
                                             .Field(new Field("metadata"))
                                             .Query(query)
                                             .Fuzziness(new Fuzziness("AUTO"))
                                             .Boost(3.0f)),
-                                        // Match on file_name (protocol titles contain diagnosis names)
+                                        // Prefer exact phrase hit in protocol title.
+                                        smm => smm.MatchPhrase(mp => mp
+                                            .Field(new Field("file_name"))
+                                            .Query(query)
+                                            .Boost(3.5f)),
+                                        // Keep fuzzy title match for typo tolerance.
                                         smm => smm.Match(m => m
                                             .Field(new Field("file_name"))
                                             .Query(query)
                                             .Fuzziness(new Fuzziness("AUTO"))
                                             .Boost(2.5f)),
-                                        // Match on summary
+                                        // Summary is still useful but secondary to metadata/title.
                                         smm => smm.Match(m => m
                                             .Field(new Field("summary"))
                                             .Query(query)
                                             .Fuzziness(new Fuzziness("AUTO"))
                                             .Boost(2.0f)),
-                                        // Match on text content (lowest boost — raw chunk text)
+                                        // Raw chunk text is the weakest signal for file discovery.
                                         smm => smm.Match(m => m
                                             .Field(new Field("text"))
                                             .Query(query)
-                                            .Boost(1.0f))
+                                            .Boost(0.75f)),
+                                        // file_name.keyword exact hit for indexes with multi-field mapping.
+                                        smm => smm.Term(new TermQuery(new Field("file_name.keyword"))
+                                        {
+                                            Value = query,
+                                            Boost = 4.5f
+                                        })
                                     )
                                 )
                             )
                         )
-                        // ICD-10 exact match on keyword field (strongest signal for protocol matching)
+                        // ICD-10 exact match on keyword field (strongest signal for protocol matching).
                         .Concat(icdCodes.Select(code =>
                             (Action<QueryDescriptor<T>>)(sq =>
                                 sq.Term(new TermQuery(new Field("icd10_codes")) { Value = code, Boost = 5.0f }))
                         ))
-                        // ICD-10 root prefix match (e.g., J20 matches J20.0, J20.1, etc.)
+                        // ICD-10 root prefix match (e.g., J20 matches J20.0, J20.1, etc.).
                         .Concat(icdRoots.Select(root =>
                             (Action<QueryDescriptor<T>>)(sq =>
                                 sq.Prefix(p => p.Field(new Field("icd10_codes")).Value(root).Boost(4.0f)))

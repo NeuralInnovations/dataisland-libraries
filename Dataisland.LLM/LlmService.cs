@@ -411,14 +411,19 @@ public class LlmService : ILlmService
             // tracked cost in the right ballpark without plumbing per-provider discount factors.
             var billablePromptTokens = response.PromptTokens - (response.CachedTokens / 2);
             // Reasoning tokens billed at the explicit ReasoningTokenCostPer1K when configured,
-            // otherwise fall back to the output rate (OpenAI o-series, gpt-5).
+            // otherwise fall back to the output rate (Gemini 2.5 Pro thoughts, OpenAI o-series/gpt-5).
             var reasoningRate = config.ReasoningTokenCostPer1K > 0
                 ? config.ReasoningTokenCostPer1K
                 : config.OutputTokenCostPer1K;
-            var cost = (decimal)billablePromptTokens / 1000m * config.InputTokenCostPer1K
-                     + (decimal)response.CompletionTokens / 1000m * config.OutputTokenCostPer1K
-                     + (decimal)response.ReasoningTokens / 1000m * reasoningRate;
-            LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)cost);
+            var inputCost = (decimal)billablePromptTokens / 1000m * config.InputTokenCostPer1K;
+            var outputCost = (decimal)response.CompletionTokens / 1000m * config.OutputTokenCostPer1K;
+            var reasoningCost = (decimal)response.ReasoningTokens / 1000m * reasoningRate;
+
+            LlmMetrics.InputCostDollarsTotal.WithLabels(labels).Inc((double)inputCost);
+            LlmMetrics.OutputCostDollarsTotal.WithLabels(labels).Inc((double)outputCost);
+            if (reasoningCost > 0)
+                LlmMetrics.ReasoningCostDollarsTotal.WithLabels(labels).Inc((double)reasoningCost);
+            LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)(inputCost + outputCost + reasoningCost));
         }
     }
 

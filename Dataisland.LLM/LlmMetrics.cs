@@ -29,7 +29,27 @@ public static class LlmMetrics
 
     public static readonly Counter CostDollarsTotal = Metrics.CreateCounter(
         "llm_cost_dollars_total",
-        "Estimated total cost in dollars for LLM calls",
+        "Estimated total cost in dollars for LLM calls (sum of input + output + reasoning)",
+        Labels);
+
+    // Per-token-type cost counters. Sum of the three equals CostDollarsTotal. Kept separate so
+    // dashboards can show the real split without reconstructing it from a proportional ratio —
+    // the ratio approach is incorrect when input dominates the bill (common on RAG-heavy
+    // workloads where prompt tokens are 70–90% of the invoice).
+    public static readonly Counter InputCostDollarsTotal = Metrics.CreateCounter(
+        "llm_input_cost_dollars_total",
+        "Estimated cost in dollars attributable to prompt/input tokens (with cached-token discount applied)",
+        Labels);
+
+    public static readonly Counter OutputCostDollarsTotal = Metrics.CreateCounter(
+        "llm_output_cost_dollars_total",
+        "Estimated cost in dollars attributable to visible output tokens (completion)",
+        Labels);
+
+    public static readonly Counter ReasoningCostDollarsTotal = Metrics.CreateCounter(
+        "llm_reasoning_cost_dollars_total",
+        "Estimated cost in dollars attributable to reasoning/thinking tokens " +
+        "(Gemini 2.5 Pro thoughts, OpenAI o-series/gpt-5 reasoning)",
         Labels);
 
     public static readonly Counter RequestsTotal = Metrics.CreateCounter(

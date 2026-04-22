@@ -96,19 +96,30 @@ public class GeminiProvider : ILlmProvider
         }
 
         // Gemini 2.5 reports "thought" tokens separately from visible output but bills them at
-        // the same rate as output. They are non-zero even with ThinkingBudget=0 on 2.5 Pro
-        // (mandatory 128-token minimum) and on any model where budget=0 is ignored. Fold them
-        // into CompletionTokens so our cost/token metrics match Google's invoice.
+        // the output rate. They are non-zero even with ThinkingBudget=0 on 2.5 Pro (mandatory
+        // 128-token minimum) and on any model where budget=0 is ignored.
+        //
+        // Expose them as ReasoningTokens (not folded into CompletionTokens). This makes:
+        //   - llm_reasoning_tokens_total populate for Pro — previously always 0 for Gemini,
+        //     which hid thinking spend inside the visible-output bucket and broke the
+        //     per-tier/per-phase breakdowns on the business dashboard;
+        //   - llm_completion_tokens_total mean "visible output" again;
+        //   - cost unchanged: RecordMetrics bills reasoning at the explicit
+        //     ReasoningTokenCostPer1K when configured, falling back to OutputTokenCostPer1K —
+        //     which is the right rate for Gemini thinking, so total $ stays identical.
+        // Historical note: completion counts for gemini-2.5-pro drop at the deploy boundary,
+        // because thinking is no longer folded in.
         var candidateTokens = usage?.CandidatesTokenCount ?? 0;
         var thoughtTokens = usage?.ThoughtsTokenCount ?? 0;
 
         return new LlmResponse(
             Content: text,
             PromptTokens: usage?.PromptTokenCount ?? 0,
-            CompletionTokens: candidateTokens + thoughtTokens,
+            CompletionTokens: candidateTokens,
             Model: request.Model)
         {
-            CachedTokens = usage?.CachedContentTokenCount ?? 0
+            CachedTokens = usage?.CachedContentTokenCount ?? 0,
+            ReasoningTokens = thoughtTokens
         };
     }
 

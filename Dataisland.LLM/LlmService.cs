@@ -230,37 +230,28 @@ public class LlmService : ILlmService
 
                 var parsed = JsonResponseParser.TryParse<T>(response.Content, _logger);
 
-                // A null parse means the LLM returned malformed/empty JSON. A single bad
-                // response used to silently collapse an entire phase (e.g. relevant-file
-                // selection), producing phantom AI-fallbacks. Retry on the same tier before
-                // giving up, matching Python's make_llm_request_with_fallback behaviour.
-                if (parsed is null && attempt < retryDelays.Length)
+                // A null parse means the LLM returned malformed/empty JSON. Previously we
+                // retried on the same tier with the same prompt before falling back to Backup
+                // — but the retry has the SAME schema on the SAME model, so if the model
+                // produced garbage once it usually produces garbage again. We pay for two
+                // billed calls to get the same failure.
+                //
+                // Skip the same-tier retry and go straight to Backup. This trades a ~9K-token
+                // Normal call for a Backup call (different model, different chance of success).
+                // Net: 1 billed call saved per parse-failure event.
+                if (parsed is null && tier != ModelTier.Backup)
                 {
-                    var delay = retryDelays[attempt];
                     _logger.LogWarning(
-                        "LLM returned unparseable JSON for tier {Tier}<{Type}> (attempt {Attempt}/{Max}), retrying in {Delay}s. Raw: {Raw}",
-                        tier, typeName, attempt + 1, retryDelays.Length + 1, delay,
+                        "LLM returned unparseable JSON for tier {Tier}<{Type}> — falling straight to Backup (no same-tier retry). Raw: {Raw}",
+                        tier, typeName,
                         response.Content.Length > 200 ? response.Content[..200] + "..." : response.Content);
-                    LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "parse_retry").Inc();
-
-                    await Task.Delay(TimeSpan.FromSeconds(delay), ct);
-                    sw = Stopwatch.StartNew();
-                    continue;
+                    LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "parse_fallback").Inc();
+                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
                 }
 
                 if (attempt > 0)
                     _logger.LogInformation("LLM call succeeded for tier {Tier}<{Type}> on retry attempt {Attempt}",
                         tier, typeName, attempt);
-
-                // After all primary-tier retries exhausted and still null: hand off to Backup
-                // so downstream gets a chance at a different provider/prompt interpretation.
-                if (parsed is null && tier != ModelTier.Backup)
-                {
-                    _logger.LogWarning(
-                        "LLM returned unparseable JSON for tier {Tier}<{Type}> after {Attempts} attempts, falling back to Backup",
-                        tier, typeName, retryDelays.Length + 1);
-                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
-                }
 
                 return new LlmResponse<T>(
                     Value: parsed,

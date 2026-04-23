@@ -43,25 +43,68 @@ public class GeminiProvider : ILlmProvider
         var config = BuildConfig(request, _thinkingBudget);
         var contents = BuildContents(request);
 
-        var response = await _client.Models.GenerateContentAsync(
+        // Use streaming internally — even for "single response" callers — so long generations
+        // don't hit Google.GenAI SDK's built-in ~100 s HttpClient timeout.
+        // Non-streaming GenerateContentAsync waits for the whole response before returning,
+        // so a verbose analytics generation that takes 120 s produces a truncated response
+        // with "Raw: {" (just the opening brace) and a JsonException downstream. Streaming
+        // keeps the connection alive — chunks arriving every second prevent the HTTP timeout
+        // from firing at all. Matches what the old server did on every analytics call.
+        //
+        // We accumulate chunks into a single Content + use the last chunk's UsageMetadata
+        // (which contains the complete tally for the full response), then return as if it
+        // were a single response — transparent to every caller in LlmService.
+        var contentBuilder = new System.Text.StringBuilder();
+        Candidate? finalCandidate = null;
+        // Running totals from streamed chunks — the SDK streaming API uses a different usage
+        // metadata type than non-streaming, so we extract ints as we go instead of holding
+        // the SDK type directly.
+        int promptTokens = 0, candidateTokens = 0, thoughtTokens = 0, cachedTokens = 0;
+        string? promptBlockReason = null;
+        string? promptBlockMessage = null;
+
+        await foreach (var chunk in _client.Models.GenerateContentStreamAsync(
             model: _model,
             contents: contents,
-            config: config);
-
-        // Prompt-level safety block: the whole request was filtered before any generation.
-        // Retrying the same model produces the same block — surface as a specific exception
-        // so LlmService can fall straight through to the Backup tier.
-        var promptBlock = response.PromptFeedback?.BlockReason;
-        if (promptBlock is not null)
+            config: config).WithCancellation(ct))
         {
-            throw new LlmContentBlockedException(
-                $"Gemini prompt blocked: reason={promptBlock} message={response.PromptFeedback?.BlockReasonMessage}");
+            if (chunk is null) continue;
+
+            if (chunk.PromptFeedback?.BlockReason is not null)
+            {
+                promptBlockReason = chunk.PromptFeedback.BlockReason.ToString();
+                promptBlockMessage = chunk.PromptFeedback.BlockReasonMessage;
+            }
+
+            // Usage metadata on streaming chunks is cumulative-so-far, not the final total on
+            // every chunk. Pull from the last non-null one; the streaming API reports final
+            // totals on the terminating chunk.
+            if (chunk.UsageMetadata is var u and not null)
+            {
+                promptTokens = u.PromptTokenCount ?? promptTokens;
+                candidateTokens = u.CandidatesTokenCount ?? candidateTokens;
+                thoughtTokens = u.ThoughtsTokenCount ?? thoughtTokens;
+                cachedTokens = u.CachedContentTokenCount ?? cachedTokens;
+            }
+
+            var candidate = chunk.Candidates?.FirstOrDefault();
+            if (candidate is not null)
+                finalCandidate = candidate;
+
+            var chunkText = candidate?.Content?.Parts?.FirstOrDefault()?.Text;
+            if (chunkText is not null)
+                contentBuilder.Append(chunkText);
         }
 
-        // Candidate-level content filter: generation started but was stopped for safety/recitation/etc.
-        // Any non-STOP, non-MAX_TOKENS finish reason means the response is not usable.
-        var candidate = response.Candidates?.FirstOrDefault();
-        var finishReason = candidate?.FinishReason;
+        // Prompt-level safety block.
+        if (promptBlockReason is not null)
+        {
+            throw new LlmContentBlockedException(
+                $"Gemini prompt blocked: reason={promptBlockReason} message={promptBlockMessage}");
+        }
+
+        // Candidate-level content filter.
+        var finishReason = finalCandidate?.FinishReason;
         if (finishReason is not null
             && finishReason != FinishReason.STOP
             && finishReason != FinishReason.MAX_TOKENS
@@ -83,42 +126,23 @@ public class GeminiProvider : ILlmProvider
                 $"Gemini finished without usable output: finishReason={finishReason}");
         }
 
-        var text = ExtractText(response);
-        var usage = response.UsageMetadata;
+        var completionText = contentBuilder.ToString();
 
-        // Empty completion tokens with no explicit block: transient failure — raise so the
-        // LlmService retry loop (or backup fallthrough) can retry instead of returning
-        // an empty string that downstream will treat as a bad JSON parse.
-        if (usage is not null && (usage.CandidatesTokenCount ?? 0) == 0 && string.IsNullOrEmpty(text))
+        // Empty output with no explicit block: transient failure — raise so the LlmService
+        // retry/fallback chain engages instead of passing an empty string downstream.
+        if (candidateTokens == 0 && string.IsNullOrEmpty(completionText))
         {
             throw new InvalidOperationException(
-                $"Gemini returned empty completion (prompt_tokens={usage.PromptTokenCount}, candidates=0)");
+                $"Gemini returned empty completion (prompt_tokens={promptTokens}, candidates=0)");
         }
 
-        // Gemini 2.5 reports "thought" tokens separately from visible output but bills them at
-        // the output rate. They are non-zero even with ThinkingBudget=0 on 2.5 Pro (mandatory
-        // 128-token minimum) and on any model where budget=0 is ignored.
-        //
-        // Expose them as ReasoningTokens (not folded into CompletionTokens). This makes:
-        //   - llm_reasoning_tokens_total populate for Pro — previously always 0 for Gemini,
-        //     which hid thinking spend inside the visible-output bucket and broke the
-        //     per-tier/per-phase breakdowns on the business dashboard;
-        //   - llm_completion_tokens_total mean "visible output" again;
-        //   - cost unchanged: RecordMetrics bills reasoning at the explicit
-        //     ReasoningTokenCostPer1K when configured, falling back to OutputTokenCostPer1K —
-        //     which is the right rate for Gemini thinking, so total $ stays identical.
-        // Historical note: completion counts for gemini-2.5-pro drop at the deploy boundary,
-        // because thinking is no longer folded in.
-        var candidateTokens = usage?.CandidatesTokenCount ?? 0;
-        var thoughtTokens = usage?.ThoughtsTokenCount ?? 0;
-
         return new LlmResponse(
-            Content: text,
-            PromptTokens: usage?.PromptTokenCount ?? 0,
+            Content: completionText,
+            PromptTokens: promptTokens,
             CompletionTokens: candidateTokens,
             Model: request.Model)
         {
-            CachedTokens = usage?.CachedContentTokenCount ?? 0,
+            CachedTokens = cachedTokens,
             ReasoningTokens = thoughtTokens
         };
     }

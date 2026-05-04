@@ -95,7 +95,7 @@ namespace Dataisland.MQ
                 configure(impl);
                 mt.UsingRabbitMq((ctx, cfg) =>
                 {
-                    cfg.Host(options.Host, options.VirtualHost, h =>
+                    cfg.Host(options.Host, options.Port, options.VirtualHost, h =>
                     {
                         h.Username(options.Username);
                         h.Password(options.Password);

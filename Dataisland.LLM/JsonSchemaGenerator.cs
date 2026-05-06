@@ -105,6 +105,9 @@ public static class JsonSchemaGenerator
             return new() { ["type"] = "integer" };
         if (type == typeof(float) || type == typeof(double) || type == typeof(decimal))
             return new() { ["type"] = "number" };
+        if (type == typeof(DateTime) || type == typeof(DateTimeOffset) ||
+            type == typeof(DateOnly) || type == typeof(TimeOnly))
+            return new() { ["type"] = "string" };
 
         // Enums → string with enum values
         if (type.IsEnum)

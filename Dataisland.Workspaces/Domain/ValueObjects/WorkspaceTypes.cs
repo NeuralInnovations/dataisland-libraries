@@ -34,6 +34,9 @@ public class WorkspaceMetadata : BaseMetadata
 
     [BsonElement("protocolSyncSources")]
     public List<ProtocolSyncSource> ProtocolSyncSources { get; set; } = [];
+
+    [BsonElement("nszuRegulationsWorkspaceId")]
+    public ObjectId? NszuRegulationsWorkspaceId { get; set; }
 }
 
 public class LibraryProfile : DescriptionProfile

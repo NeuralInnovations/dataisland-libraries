@@ -83,5 +83,6 @@ file class WorkspaceIndexes : IndexesBuilder<Workspace>
     public WorkspaceIndexes()
     {
         Index(Ascending("metadata.organizationId"));
+        Index(Ascending("metadata.nszuRegulationsWorkspaceId"));
     }
 }

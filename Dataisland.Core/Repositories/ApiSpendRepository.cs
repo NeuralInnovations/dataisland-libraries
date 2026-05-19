@@ -23,6 +23,7 @@ public interface IApiSpendRepository : IRepository
         decimal additionalCostUsd,
         long additionalPromptTokens,
         long additionalCompletionTokens,
+        int caseCountDelta = 1,
         CancellationToken ct = default);
 
     Task<ApiSpendRecord?> GetRecordAsync(string organizationId, string yearMonth, CancellationToken ct = default);
@@ -76,6 +77,7 @@ public class ApiSpendRepository : RepositoryWithIndex<ApiSpendRecord>, IApiSpend
         decimal additionalCostUsd,
         long additionalPromptTokens,
         long additionalCompletionTokens,
+        int caseCountDelta = 1,
         CancellationToken ct = default)
     {
         var filter = Builders<ApiSpendRecord>.Filter.And(
@@ -87,7 +89,7 @@ public class ApiSpendRepository : RepositoryWithIndex<ApiSpendRecord>, IApiSpend
             .Inc(x => x.CumulativeCostUsd, additionalCostUsd)
             .Inc(x => x.PromptTokens, additionalPromptTokens)
             .Inc(x => x.CompletionTokens, additionalCompletionTokens)
-            .Inc(x => x.CaseCount, 1)
+            .Inc(x => x.CaseCount, caseCountDelta)
             .Set(x => x.LastIncrementedAt, now)
             .Set(x => x.ModifiedAt, now)
             .SetOnInsert(x => x.OrganizationId, organizationId)

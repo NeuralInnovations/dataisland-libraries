@@ -9,6 +9,11 @@ namespace Dataisland.Workspaces.Repositories;
 public interface ILibraryRepository : IRepository
 {
     Task<Library?> GetByIdAsync(string id);
+    // Finds the local Remote-typed library whose Profile.RemoteLibraryId points at the
+    // given remote-side library id. Used by file/search proxy paths: the caller (Source
+    // on a processed case, or a chunk's origin) carries the remote-side id, and we need
+    // the local row to read LibraryUrl + verify the library still exists/is Remote.
+    Task<Library?> GetByRemoteLibraryIdAsync(string remoteLibraryId);
     Task<List<Library>> GetByOrganizationIdAsync(ObjectId organizationId);
     Task<List<Library>> GetLocalLibrariesAsync();
     Task<Library> CreateAsync(Library library);
@@ -24,6 +29,12 @@ public class LibraryRepository : RepositoryWithIndex<Library>, ILibraryRepositor
 
     public async Task<Library?> GetByIdAsync(string id) =>
         await Collection.Find(x => x.Id == id).FirstOrDefaultAsync();
+
+    public async Task<Library?> GetByRemoteLibraryIdAsync(string remoteLibraryId) =>
+        await Collection.Find(x =>
+            x.Profile.Type == LibraryType.Remote
+            && x.Profile.RemoteLibraryId == remoteLibraryId
+            && !x.IsDeleted).FirstOrDefaultAsync();
 
     public async Task<List<Library>> GetByOrganizationIdAsync(ObjectId organizationId) =>
         await Collection.Find(x => (x.OrganizationIds.Contains(organizationId) || x.Profile.IsPublic) && !x.IsDeleted).ToListAsync();

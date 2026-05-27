@@ -130,6 +130,11 @@ public class ElasticClientImpl : IElasticClient
         return response.Exists;
     }
 
+    public async Task EnsureVectorIndexAsync(string indexName, CancellationToken ct = default)
+    {
+        await CreateIndexAsync(indexName, VectorIndexMapping.Configure, ct);
+    }
+
     public async Task ReindexAsync(string sourceIndex, string targetIndex, CancellationToken ct = default)
     {
         await _client.ReindexAsync(r => r
@@ -158,6 +163,38 @@ public class ElasticClientImpl : IElasticClient
         if (response.Errors)
             _logger.LogError("Bulk index errors in {IndexName}: {Errors}",
                 indexName, string.Join("; ", response.ItemsWithErrors.Select(i => i.Error?.Reason)));
+    }
+
+    public async Task<int> CopyByFileIdAsync(string sourceIndex, string targetIndex, string fileId, CancellationToken ct = default)
+    {
+        if (!await IndexExistsAsync(sourceIndex, ct))
+            return 0;
+
+        await EnsureVectorIndexAsync(targetIndex, ct);
+
+        var hits = await SearchByTermAsync<VectorChunkDocument>(
+            [sourceIndex], "file_id", fileId, size: 10000, ct);
+        if (hits.Count == 0)
+            return 0;
+
+        var request = new BulkRequest(targetIndex)
+        {
+            Operations = new BulkOperationsCollection(
+                hits.Select(h =>
+                    (IBulkOperation)new BulkIndexOperation<VectorChunkDocument>(h.Source) { Id = h.Id }
+                )
+            )
+        };
+
+        var response = await _client.BulkAsync(request, ct);
+        if (!response.IsValidResponse || response.Errors)
+        {
+            var errors = string.Join("; ", response.ItemsWithErrors.Select(i => i.Error?.Reason));
+            throw new InvalidOperationException(
+                $"Failed to copy Elasticsearch chunks for file {fileId} from {sourceIndex} to {targetIndex}: {errors}");
+        }
+
+        return hits.Count;
     }
 
     public async Task DeleteDocumentAsync(string indexName, string docId, CancellationToken ct = default)

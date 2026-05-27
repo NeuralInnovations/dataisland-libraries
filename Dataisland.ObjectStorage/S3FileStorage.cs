@@ -74,6 +74,43 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
         }, ct);
     }
 
+    public async Task<int> CopyPrefixAsync(string bucket, string sourcePrefix, string targetPrefix, CancellationToken ct = default)
+    {
+        await EnsureBucketAsync(bucket, ct);
+
+        sourcePrefix = NormalizePrefix(sourcePrefix);
+        targetPrefix = NormalizePrefix(targetPrefix);
+        var copied = 0;
+        string? token = null;
+
+        do
+        {
+            var list = await _client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = bucket,
+                Prefix = sourcePrefix,
+                ContinuationToken = token
+            }, ct);
+
+            foreach (var obj in list.S3Objects)
+            {
+                var suffix = obj.Key[sourcePrefix.Length..];
+                await _client.CopyObjectAsync(new CopyObjectRequest
+                {
+                    SourceBucket = bucket,
+                    SourceKey = obj.Key,
+                    DestinationBucket = bucket,
+                    DestinationKey = targetPrefix + suffix
+                }, ct);
+                copied++;
+            }
+
+            token = list.IsTruncated ? list.NextContinuationToken : null;
+        } while (token is not null);
+
+        return copied;
+    }
+
     public async Task DeleteAsync(string bucket, string path, CancellationToken ct = default)
     {
         await _client.DeleteObjectAsync(new DeleteObjectRequest
@@ -81,6 +118,41 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
             BucketName = bucket,
             Key = path
         }, ct);
+    }
+
+    public async Task<int> DeletePrefixAsync(string bucket, string prefix, CancellationToken ct = default)
+    {
+        prefix = NormalizePrefix(prefix);
+        var deleted = 0;
+        string? token = null;
+
+        do
+        {
+            var list = await _client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = bucket,
+                Prefix = prefix,
+                ContinuationToken = token
+            }, ct);
+
+            var batch = list.S3Objects
+                .Select(x => new KeyVersion { Key = x.Key })
+                .ToList();
+
+            if (batch.Count > 0)
+            {
+                await _client.DeleteObjectsAsync(new DeleteObjectsRequest
+                {
+                    BucketName = bucket,
+                    Objects = batch
+                }, ct);
+                deleted += batch.Count;
+            }
+
+            token = list.IsTruncated ? list.NextContinuationToken : null;
+        } while (token is not null);
+
+        return deleted;
     }
 
     public async Task<bool> ExistsAsync(string bucket, string path, CancellationToken ct = default)
@@ -130,6 +202,12 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
         });
 
         return Task.FromResult(url);
+    }
+
+    private static string NormalizePrefix(string prefix)
+    {
+        prefix = prefix.TrimStart('/');
+        return prefix.EndsWith('/') ? prefix : $"{prefix}/";
     }
 
     public ValueTask DisposeAsync()

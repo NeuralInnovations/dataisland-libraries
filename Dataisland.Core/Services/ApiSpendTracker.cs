@@ -18,12 +18,16 @@ public interface IApiSpendTracker
     /// <summary>
     /// Record post-operation spend for the organisation, atomically incrementing the current
     /// month's cumulative cost and token counters. Safe to call from parallel consumers.
+    /// Set <paramref name="countAsCase"/> to false for post-processing work (analytics
+    /// aggregation) that should add cost/tokens but NOT bump the caseCount — otherwise the
+    /// per-flow analytics step inflates the case counter beyond the actual cases processed.
     /// </summary>
     Task<decimal> RecordAsync(
         string organizationId,
         decimal costUsd,
         long promptTokens,
         long completionTokens,
+        bool countAsCase = true,
         CancellationToken ct = default);
 
     /// <summary>
@@ -56,7 +60,7 @@ public class NullApiSpendTracker(ILogger<NullApiSpendTracker> logger) : IApiSpen
         return Task.FromResult(new SpendGateResult(true, 0m, 0m, null));
     }
 
-    public Task<decimal> RecordAsync(string organizationId, decimal costUsd, long promptTokens, long completionTokens, CancellationToken ct = default)
+    public Task<decimal> RecordAsync(string organizationId, decimal costUsd, long promptTokens, long completionTokens, bool countAsCase = true, CancellationToken ct = default)
         => Task.FromResult(0m);
 
     public Task<decimal> GetPerCaseCostCapUsdAsync(string organizationId, CancellationToken ct = default)
@@ -104,17 +108,18 @@ public class ApiSpendTracker(
         decimal costUsd,
         long promptTokens,
         long completionTokens,
+        bool countAsCase = true,
         CancellationToken ct = default)
     {
-        // Cost of 0 still worth recording so the case-count and token counters advance —
-        // useful for "case ran for free because all calls were cached" visibility.
         var yearMonth = CurrentYearMonth();
         var newTotal = await spendRepo.IncrementAsync(
-            organizationId, yearMonth, costUsd, promptTokens, completionTokens, ct);
+            organizationId, yearMonth, costUsd, promptTokens, completionTokens,
+            caseCountDelta: countAsCase ? 1 : 0, ct: ct);
 
         logger.LogInformation(
-            "ApiSpendTracker: org={OrgId} month={YearMonth} +${Delta:F4} -> ${Total:F2} (tokens +{Prompt}p +{Completion}c)",
-            organizationId, yearMonth, costUsd, newTotal, promptTokens, completionTokens);
+            "ApiSpendTracker: org={OrgId} month={YearMonth} +${Delta:F4} -> ${Total:F2} (tokens +{Prompt}p +{Completion}c, caseDelta={CaseDelta})",
+            organizationId, yearMonth, costUsd, newTotal, promptTokens, completionTokens,
+            countAsCase ? 1 : 0);
 
         return newTotal;
     }

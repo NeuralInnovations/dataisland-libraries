@@ -16,6 +16,12 @@ public interface IOrganizationRepository : IRepository
     Task UpdateAsync(Organization org);
     Task SoftDeleteAsync(string id);
     Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId);
+    /// <summary>
+    /// Ids of orgs whose processing is currently paused. Used by dispatcher workers to
+    /// exclude their cases at the Mongo query level — without this filter, a paused org
+    /// with old InQueue rows fills the dispatcher's batch and starves active orgs.
+    /// </summary>
+    Task<List<ObjectId>> GetPausedOrganizationIdsAsync();
 }
 
 public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrganizationRepository
@@ -64,6 +70,18 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
             Builders<Organization>.Update
                 .Set(x => x.Metadata.IsDeleted, true)
                 .Set(x => x.ModifiedAt, DateTime.UtcNow));
+
+    public async Task<List<ObjectId>> GetPausedOrganizationIdsAsync()
+    {
+        var filter = Builders<Organization>.Filter.And(
+            Builders<Organization>.Filter.Ne("profile.processingPausedAt", BsonNull.Value),
+            Builders<Organization>.Filter.Eq(x => x.Metadata.IsDeleted, false));
+        var projection = Builders<Organization>.Projection.Expression(x => x.Id);
+        var ids = await Secondary.Find(filter).Project(projection).ToListAsync();
+        return ids.Where(id => ObjectId.TryParse(id, out _))
+            .Select(ObjectId.Parse)
+            .ToList();
+    }
 }
 
 file class OrganizationIndexes : IndexesBuilder<Organization>

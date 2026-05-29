@@ -36,12 +36,24 @@ public class InviteLink : EntityBase
     [BsonElement("doctorId")]
     public string? DoctorId { get; set; }
 
-    // When set, accepting the invite adds the joining user's DoctorProfile to this
-    // department's DepartmentIds. Only meaningful with Role=Doctor — admin-role invites
-    // are not department-scoped at the membership layer. Validated at create time to
-    // ensure the department belongs to OrganizationId.
+    // Department-head invite: accepting the invite pins the joining user's membership
+    // (OrganizationMemberRole.DepartmentIds) to these departments. A head can oversee one
+    // OR several departments. Only meaningful with Role=Admin — Doctor-role invites are
+    // not department-scoped at the membership layer. Validated at create time to ensure
+    // every id belongs to OrganizationId.
+    [BsonElement("departmentIds")]
+    public List<string> DepartmentIds { get; set; } = [];
+
+    // Legacy single-department field. Read-only fallback for invites issued before the
+    // array field existed.
     [BsonElement("departmentId")]
     public string? DepartmentId { get; set; }
+
+    [BsonIgnore]
+    public IReadOnlyList<string> Departments =>
+        string.IsNullOrWhiteSpace(DepartmentId)
+            ? DepartmentIds
+            : DepartmentIds.Contains(DepartmentId!) ? DepartmentIds : [.. DepartmentIds, DepartmentId!];
 }
 
 [BsonIgnoreExtraElements(Inherited = true)]

@@ -16,10 +16,26 @@ public class OrganizationMemberRole
     [BsonElement("doctorId")]
     public string? DoctorId { get; set; }
 
-    // Department-scoped membership: when set, the user only sees cases/doctors/analytics
-    // tied to doctors in this department. Populated by accepting a department-scoped invite
-    // (see InvitesController). Independent of Role — a Doctor + Department combo just means
-    // the doctor has been registered under a department too.
+    // Department-scoped membership: when non-empty, the user only sees cases/doctors/analytics
+    // tied to doctors in ANY of these departments (union, not intersection). One person can
+    // head multiple departments — common in smaller clinics where one director oversees
+    // several specialties. Populated by accepting a department-scoped invite (InvitesController).
+    [BsonElement("departmentIds")]
+    public List<string> DepartmentIds { get; set; } = [];
+
+    // Legacy single-department field. Kept for backward read-compat with records written
+    // before DepartmentIds existed; combined into the effective set via Departments.
     [BsonElement("departmentId")]
     public string? DepartmentId { get; set; }
+
+    /// <summary>
+    /// Effective list of department ids that scope this membership — union of the new array
+    /// field and the legacy singular field (back-compat with rows written before the array
+    /// existed). Empty when the member is org-wide (no department restriction).
+    /// </summary>
+    [BsonIgnore]
+    public IReadOnlyList<string> Departments =>
+        string.IsNullOrWhiteSpace(DepartmentId)
+            ? DepartmentIds
+            : DepartmentIds.Contains(DepartmentId!) ? DepartmentIds : [.. DepartmentIds, DepartmentId!];
 }

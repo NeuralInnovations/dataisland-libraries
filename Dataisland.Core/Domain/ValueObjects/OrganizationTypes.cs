@@ -15,4 +15,11 @@ public class OrganizationMemberRole
 
     [BsonElement("doctorId")]
     public string? DoctorId { get; set; }
+
+    // Department-scoped membership: when set, the user only sees cases/doctors/analytics
+    // tied to doctors in this department. Populated by accepting a department-scoped invite
+    // (see InvitesController). Independent of Role — a Doctor + Department combo just means
+    // the doctor has been registered under a department too.
+    [BsonElement("departmentId")]
+    public string? DepartmentId { get; set; }
 }

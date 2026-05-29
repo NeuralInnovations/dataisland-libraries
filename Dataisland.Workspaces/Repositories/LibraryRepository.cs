@@ -16,6 +16,11 @@ public interface ILibraryRepository : IRepository
     Task<Library?> GetByRemoteLibraryIdAsync(string remoteLibraryId);
     Task<List<Library>> GetByOrganizationIdAsync(ObjectId organizationId);
     Task<List<Library>> GetLocalLibrariesAsync();
+    // True iff there exists a non-deleted public library that has this org among its
+    // contributing OrganizationIds. Used by FilesController to grant cross-org read
+    // access when a case from org A cites a file from a public-library contributor org B —
+    // without this, the cite-back UI 404s for everyone except members of B.
+    Task<bool> ExistsPublicLibraryWithOrganizationAsync(ObjectId organizationId);
     Task<Library> CreateAsync(Library library);
     Task UpdateAsync(Library library);
     Task SoftDeleteAsync(string id);
@@ -41,6 +46,11 @@ public class LibraryRepository : RepositoryWithIndex<Library>, ILibraryRepositor
 
     public async Task<List<Library>> GetLocalLibrariesAsync() =>
         await Collection.Find(x => x.Profile.Type == LibraryType.Local && !x.IsDeleted).ToListAsync();
+
+    public async Task<bool> ExistsPublicLibraryWithOrganizationAsync(ObjectId organizationId) =>
+        await Collection.Find(x => x.Profile.IsPublic
+                                   && x.OrganizationIds.Contains(organizationId)
+                                   && !x.IsDeleted).AnyAsync();
 
     public async Task<Library> CreateAsync(Library library)
     {

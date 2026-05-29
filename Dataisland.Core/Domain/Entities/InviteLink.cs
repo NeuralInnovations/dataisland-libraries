@@ -35,6 +35,13 @@ public class InviteLink : EntityBase
 
     [BsonElement("doctorId")]
     public string? DoctorId { get; set; }
+
+    // When set, accepting the invite adds the joining user's DoctorProfile to this
+    // department's DepartmentIds. Only meaningful with Role=Doctor — admin-role invites
+    // are not department-scoped at the membership layer. Validated at create time to
+    // ensure the department belongs to OrganizationId.
+    [BsonElement("departmentId")]
+    public string? DepartmentId { get; set; }
 }
 
 [BsonIgnoreExtraElements(Inherited = true)]

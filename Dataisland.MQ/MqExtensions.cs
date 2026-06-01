@@ -51,6 +51,11 @@ namespace Dataisland.MQ
                                 e.SetQueueArgument("x-delivery-limit", deliveryLimit);
                         }
 
+                        if (attribute.DeliveryAcknowledgementTimeoutInMilliseconds > 0)
+                            e.SetQueueArgument(
+                                "x-consumer-timeout",
+                                attribute.DeliveryAcknowledgementTimeoutInMilliseconds);
+
                         if (attribute.RetryCount > 0)
                             e.UseMessageRetry(a =>
                             {

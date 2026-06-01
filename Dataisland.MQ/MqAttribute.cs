@@ -3,6 +3,9 @@ namespace Dataisland.MQ
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
     public class MqAttribute : Attribute
     {
+        // RabbitMQ 3.12 supports per-queue consumer ack timeout values, not per-queue "undefined".
+        public const long LongRunningConsumerTimeoutInMilliseconds = 365L * 24 * 60 * 60 * 1000;
+
         public MqAttribute(string queue)
         {
             if (string.IsNullOrWhiteSpace(queue))
@@ -19,6 +22,8 @@ namespace Dataisland.MQ
         public int RetryCount { get; set; } = 3;
         public float RetryIntervalInSeconds { get; set; } = 3;
         public int ConsumerTimeoutInSeconds { get; set; } = 0;
+        /// <summary>RabbitMQ x-consumer-timeout queue argument in milliseconds. Zero leaves broker defaults intact.</summary>
+        public long DeliveryAcknowledgementTimeoutInMilliseconds { get; set; } = 0;
         public QueueType QueueType { get; set; } = QueueType.Inherited;
         public int DeliveryLimit { get; set; } = -1;
 

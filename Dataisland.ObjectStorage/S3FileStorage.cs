@@ -43,6 +43,18 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
         return ms;
     }
 
+    public async Task MoveAsync(string bucket, string sourcePath, string destinationPath, CancellationToken ct = default)
+    {
+        await EnsureBucketAsync(bucket, ct);
+        await _client.CopyObjectAsync(new CopyObjectRequest
+        {
+            SourceBucket = bucket,
+            SourceKey = sourcePath,
+            DestinationBucket = bucket,
+            DestinationKey = destinationPath
+        }, ct);
+    }
+
     public async Task UploadAsync(string bucket, string path, Stream content, string contentType, CancellationToken ct = default)
     {
         await EnsureBucketAsync(bucket, ct);

@@ -54,6 +54,12 @@ public class InviteLink : EntityBase
         string.IsNullOrWhiteSpace(DepartmentId)
             ? DepartmentIds
             : DepartmentIds.Contains(DepartmentId!) ? DepartmentIds : [.. DepartmentIds, DepartmentId!];
+
+    // Direction-head invite: accepting pins the joining user's membership
+    // (OrganizationMemberRole.DirectionIds) to these directions. Parallel to DepartmentIds,
+    // only meaningful with Role=Admin. New field, no legacy singular counterpart.
+    [BsonElement("directionIds")]
+    public List<string> DirectionIds { get; set; } = [];
 }
 
 [BsonIgnoreExtraElements(Inherited = true)]

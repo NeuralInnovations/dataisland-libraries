@@ -28,6 +28,13 @@ public class OrganizationMemberRole
     [BsonElement("departmentId")]
     public string? DepartmentId { get; set; }
 
+    // Direction-scoped membership: parallel grouping axis to departments. When non-empty the
+    // user is a "head of direction" — sees only doctors/cases/analytics tied to doctors in ANY
+    // of these directions (union, combined with any DepartmentIds scope). New field, no legacy
+    // singular counterpart.
+    [BsonElement("directionIds")]
+    public List<string> DirectionIds { get; set; } = [];
+
     /// <summary>
     /// Effective list of department ids that scope this membership — union of the new array
     /// field and the legacy singular field (back-compat with rows written before the array

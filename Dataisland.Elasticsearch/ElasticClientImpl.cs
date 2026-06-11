@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Core.Bulk;
 using Elastic.Clients.Elasticsearch.Core.Search;
@@ -132,7 +133,13 @@ public class ElasticClientImpl : IElasticClient
 
     public async Task EnsureVectorIndexAsync(string indexName, CancellationToken ct = default)
     {
-        await CreateIndexAsync(indexName, VectorIndexMapping.Configure, ct);
+        if (!await IndexExistsAsync(indexName, ct))
+        {
+            await CreateIndexAsync(indexName, VectorIndexMapping.Configure, ct);
+            return;
+        }
+
+        await EnsureVectorIndexMappingsAsync(indexName, ct);
     }
 
     public async Task ReindexAsync(string sourceIndex, string targetIndex, CancellationToken ct = default)
@@ -197,6 +204,63 @@ public class ElasticClientImpl : IElasticClient
         return hits.Count;
     }
 
+    public async Task<long> UpdateFileTypeByFileIdsAsync(
+        string indexName,
+        IReadOnlyCollection<string> fileIds,
+        int fileType,
+        CancellationToken ct = default)
+    {
+        var ids = fileIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ids.Length == 0 || !await IndexExistsAsync(indexName, ct))
+            return 0;
+
+        await EnsureVectorIndexMappingsAsync(indexName, ct);
+
+        var body = new
+        {
+            script = new
+            {
+                source = "ctx._source.file_type = params.fileType",
+                lang = "painless",
+                @params = new { fileType }
+            },
+            query = new
+            {
+                terms = new Dictionary<string, string[]>
+                {
+                    ["file_id"] = ids
+                }
+            }
+        };
+
+        var path = new Elastic.Transport.EndpointPath(
+            Elastic.Transport.HttpMethod.POST,
+            $"/{Uri.EscapeDataString(indexName)}/_update_by_query?conflicts=proceed&refresh=true");
+        var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
+            in path,
+            Elastic.Transport.PostData.String(JsonSerializer.Serialize(body)),
+            null, null, ct);
+
+        if (!response.ApiCallDetails.HasSuccessfulStatusCode)
+            throw new InvalidOperationException(
+                $"Failed to update file_type for {ids.Length} file(s) in {indexName}: HTTP {response.ApiCallDetails.HttpStatusCode}");
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Body);
+            return document.RootElement.TryGetProperty("updated", out var updated) && updated.TryGetInt64(out var value)
+                ? value
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
     public async Task DeleteDocumentAsync(string indexName, string docId, CancellationToken ct = default)
     {
         await _client.DeleteAsync(new DeleteRequest(indexName, docId), ct);
@@ -209,23 +273,24 @@ public class ElasticClientImpl : IElasticClient
     }
 
     public async Task<IReadOnlyList<SearchHit<T>>> KnnSearchAsync<T>(
-        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, CancellationToken ct = default)
+        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, int[]? fileTypeFilters = null, CancellationToken ct = default)
     {
+        var filters = BuildSearchFilters<T>(fileIdFilter, fileTypeFilters);
         var response = await _client.SearchAsync<T>(s =>
             s.Index(string.Join(",", indices))
                 .Knn(knn =>
                 {
                     // When filtering by file_id, use more candidates to ensure good recall
                     // within a single file (unfiltered: k*2 is standard; filtered: k*5 compensates for filter)
-                    var numCandidates = string.IsNullOrEmpty(fileIdFilter) ? k * 2 : Math.Max(k * 5, 100);
+                    var numCandidates = filters.Length == 0 ? k * 2 : Math.Max(k * 5, 100);
                     knn.Field(new Field("embedding"))
                         .QueryVector(queryVector)
                         .k(k)
                         .NumCandidates(numCandidates);
 
-                    // Server-side file_id filter — applied within KNN search, not client-side
-                    if (!string.IsNullOrEmpty(fileIdFilter))
-                        knn.Filter(f => f.Term(new TermQuery(new Field("file_id")) { Value = fileIdFilter }));
+                    // Server-side filters are applied within KNN search, not client-side.
+                    if (filters.Length > 0)
+                        knn.Filter(f => f.Bool(b => b.Filter(filters)));
                 }), ct);
 
         if (!response.IsValidResponse) return [];
@@ -236,13 +301,13 @@ public class ElasticClientImpl : IElasticClient
     }
 
     public async Task<IReadOnlyList<SearchHit<T>>> MultiSearchAsync<T>(
-        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, CancellationToken ct = default)
+        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, int[]? fileTypeFilters = null, CancellationToken ct = default)
     {
         var allResults = new List<SearchHit<T>>();
 
         foreach (var vector in queryVectors)
         {
-            var hits = await KnnSearchAsync<T>(indices, vector, k, fileIdFilter, ct);
+            var hits = await KnnSearchAsync<T>(indices, vector, k, fileIdFilter, fileTypeFilters, ct);
             allResults.AddRange(hits);
         }
 
@@ -258,7 +323,7 @@ public class ElasticClientImpl : IElasticClient
         new(@"^[A-Z]\d{2}(\.\d{1,2})?$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     public async Task<IReadOnlyList<SearchHit<T>>> SearchByMetadataAsync<T>(
-        string[] indices, string[] queries, CancellationToken ct = default)
+        string[] indices, string[] queries, int[]? fileTypeFilters = null, CancellationToken ct = default)
     {
         const int metadataResultWindow = 250;
 
@@ -277,6 +342,7 @@ public class ElasticClientImpl : IElasticClient
         // Extract ICD-10 root codes (e.g., J20.9 -> J20) for prefix matching
         var icdRoots = icdCodes.Select(c => c.Contains('.') ? c.Split('.')[0] : c).Distinct().ToArray();
 
+        var filters = BuildSearchFilters<T>(null, fileTypeFilters);
         var response = await _client.SearchAsync<T>(s => s
             .Index(string.Join(",", indices))
             .Size(metadataResultWindow)
@@ -284,6 +350,8 @@ public class ElasticClientImpl : IElasticClient
             .Collapse(new FieldCollapse { Field = new Field("file_id") })
             .Query(q => q
                 .Bool(b => b
+                    .Filter(filters)
+                    .MinimumShouldMatch(1)
                     .Should(
                         // Per-query matching across file-level signals first, chunk text second.
                         normalizedQueries.Select(query =>
@@ -348,6 +416,63 @@ public class ElasticClientImpl : IElasticClient
         return response.Hits
             .Select(h => new SearchHit<T>(h.Id!, (float)(h.Score ?? 0), h.Source!))
             .ToList();
+    }
+
+    private async Task EnsureVectorIndexMappingsAsync(string indexName, CancellationToken ct)
+    {
+        const string mappingJson = """
+            {
+              "properties": {
+                "file_type": { "type": "integer" }
+              }
+            }
+            """;
+
+        try
+        {
+            var path = new Elastic.Transport.EndpointPath(
+                Elastic.Transport.HttpMethod.PUT,
+                $"/{Uri.EscapeDataString(indexName)}/_mapping");
+            var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
+                in path,
+                Elastic.Transport.PostData.String(mappingJson),
+                null, null, ct);
+
+            if (!response.ApiCallDetails.HasSuccessfulStatusCode)
+                _logger.LogWarning(
+                    "Failed to ensure Elasticsearch file_type mapping for {IndexName}: HTTP {Status}",
+                    indexName,
+                    response.ApiCallDetails.HttpStatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not ensure Elasticsearch file_type mapping for {IndexName}", indexName);
+        }
+    }
+
+    private static Action<QueryDescriptor<T>>[] BuildSearchFilters<T>(string? fileIdFilter, int[]? fileTypeFilters)
+    {
+        var filters = new List<Action<QueryDescriptor<T>>>();
+
+        if (!string.IsNullOrWhiteSpace(fileIdFilter))
+            filters.Add(q => q.Term(new TermQuery(new Field("file_id")) { Value = fileIdFilter }));
+
+        var normalizedFileTypes = fileTypeFilters?
+            .Distinct()
+            .ToArray();
+        if (normalizedFileTypes is { Length: > 0 })
+        {
+            var typeClauses = normalizedFileTypes
+                .Select<int, Action<QueryDescriptor<T>>>(type =>
+                    q => q.Term(new TermQuery(new Field("file_type")) { Value = type }))
+                .ToArray();
+
+            filters.Add(q => q.Bool(b => b
+                .Should(typeClauses)
+                .MinimumShouldMatch(1)));
+        }
+
+        return filters.ToArray();
     }
 
     public async Task<IReadOnlyList<SearchHit<T>>> SearchByTermAsync<T>(

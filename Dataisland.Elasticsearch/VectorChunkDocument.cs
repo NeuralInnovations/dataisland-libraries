@@ -36,4 +36,7 @@ public class VectorChunkDocument
 
     [JsonPropertyName("document_date")]
     public string? DocumentDate { get; set; }
+
+    [JsonPropertyName("file_type")]
+    public int? FileType { get; set; }
 }

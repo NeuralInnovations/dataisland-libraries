@@ -19,18 +19,19 @@ public interface IElasticClient
     Task IndexDocumentAsync<T>(string indexName, string docId, T document, CancellationToken ct = default);
     Task BulkIndexAsync<T>(string indexName, IEnumerable<(string Id, T Document)> documents, CancellationToken ct = default);
     Task<int> CopyByFileIdAsync(string sourceIndex, string targetIndex, string fileId, CancellationToken ct = default);
+    Task<long> UpdateFileTypeByFileIdsAsync(string indexName, IReadOnlyCollection<string> fileIds, int fileType, CancellationToken ct = default);
     Task DeleteDocumentAsync(string indexName, string docId, CancellationToken ct = default);
     Task DeleteByFileIdAsync(string indexName, string fileId, CancellationToken ct = default);
 
     // Search
     Task<IReadOnlyList<SearchHit<T>>> KnnSearchAsync<T>(
-        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, CancellationToken ct = default);
+        string[] indices, float[] queryVector, int k, string? fileIdFilter = null, int[]? fileTypeFilters = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<SearchHit<T>>> MultiSearchAsync<T>(
-        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, CancellationToken ct = default);
+        string[] indices, float[][] queryVectors, int k, string? fileIdFilter = null, int[]? fileTypeFilters = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<SearchHit<T>>> SearchByMetadataAsync<T>(
-        string[] indices, string[] queries, CancellationToken ct = default);
+        string[] indices, string[] queries, int[]? fileTypeFilters = null, CancellationToken ct = default);
 
     Task<IReadOnlyList<SearchHit<T>>> SearchByTermAsync<T>(
         string[] indices, string field, string value, int size = 100, CancellationToken ct = default);

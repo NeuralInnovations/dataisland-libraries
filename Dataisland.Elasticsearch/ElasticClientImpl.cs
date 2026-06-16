@@ -13,6 +13,7 @@ public class ElasticClientImpl : IElasticClient
 {
     private readonly ElasticsearchClient _client;
     private readonly ILogger<ElasticClientImpl> _logger;
+    private static readonly TimeSpan FileTypeUpdateRequestTimeout = TimeSpan.FromMinutes(5);
 
     public ElasticClientImpl(ElasticsearchOptions options, ILogger<ElasticClientImpl> logger)
     {
@@ -238,15 +239,21 @@ public class ElasticClientImpl : IElasticClient
 
         var path = new Elastic.Transport.EndpointPath(
             Elastic.Transport.HttpMethod.POST,
-            $"/{Uri.EscapeDataString(indexName)}/_update_by_query?conflicts=proceed&refresh=true");
+            $"/{Uri.EscapeDataString(indexName)}/_update_by_query?conflicts=proceed&refresh=false&timeout=5m&scroll_size=500");
+        var requestConfiguration = new Elastic.Transport.RequestConfiguration
+        {
+            RequestTimeout = FileTypeUpdateRequestTimeout,
+            MaxRetryTimeout = FileTypeUpdateRequestTimeout,
+            DisableDirectStreaming = true
+        };
         var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
             in path,
             Elastic.Transport.PostData.String(JsonSerializer.Serialize(body)),
-            null, null, ct);
+            null, requestConfiguration, ct);
 
         if (!response.ApiCallDetails.HasSuccessfulStatusCode)
             throw new InvalidOperationException(
-                $"Failed to update file_type for {ids.Length} file(s) in {indexName}: HTTP {response.ApiCallDetails.HttpStatusCode}");
+                BuildFileTypeUpdateError(response, ids.Length, indexName));
 
         try
         {
@@ -259,6 +266,41 @@ public class ElasticClientImpl : IElasticClient
         {
             return 0;
         }
+    }
+
+    private static string BuildFileTypeUpdateError(
+        Elastic.Transport.StringResponse response,
+        int fileCount,
+        string indexName)
+    {
+        var details = response.ApiCallDetails;
+        var status = details.HttpStatusCode?.ToString() ?? "<none>";
+        var exception = details.OriginalException is null
+            ? "<none>"
+            : $"{details.OriginalException.GetType().Name}: {details.OriginalException.Message}";
+        var body = !string.IsNullOrWhiteSpace(response.Body)
+            ? response.Body
+            : DecodeResponseBody(details.ResponseBodyInBytes);
+        var uri = details.Uri?.ToString() ?? "<unknown>";
+
+        return
+            $"Failed to update file_type for {fileCount} file(s) in {indexName}: HTTP {status}; " +
+            $"uri={uri}; exception={exception}; body={TruncateForLog(body)}; debug={TruncateForLog(details.DebugInformation)}";
+    }
+
+    private static string DecodeResponseBody(byte[]? body) =>
+        body is { Length: > 0 }
+            ? System.Text.Encoding.UTF8.GetString(body)
+            : "<empty>";
+
+    private static string TruncateForLog(string? value, int maxLength = 2000)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "<empty>";
+
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength] + "...";
     }
 
     public async Task DeleteDocumentAsync(string indexName, string docId, CancellationToken ct = default)

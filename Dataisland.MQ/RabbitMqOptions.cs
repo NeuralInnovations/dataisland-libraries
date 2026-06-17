@@ -21,6 +21,16 @@ namespace Dataisland.MQ
         /// </summary>
         public bool DelayedRedeliveryEnabled { get; set; } = false;
 
+        /// <summary>
+        /// Optional upper bound applied to every consumer's PrefetchCount and ConcurrentMessageLimit
+        /// (clamped down, never up). For small single-node customers whose CPU-bound embeddings
+        /// sidecar can't sustain the default per-consumer concurrency (e.g. process-medical-case at
+        /// 10), set this low (e.g. 3) to avoid thrashing the sidecar with 503s. 0 = no cap (default;
+        /// large/multi-replica deployments keep the per-consumer attribute values).
+        /// Set via <c>RabbitMq__ConsumerConcurrencyCap=3</c>.
+        /// </summary>
+        public int ConsumerConcurrencyCap { get; set; } = 0;
+
         public void ApplyConnectionString()
         {
             if (string.IsNullOrEmpty(ConnectionString)) return;

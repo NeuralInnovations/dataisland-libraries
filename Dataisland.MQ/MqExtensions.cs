@@ -29,9 +29,19 @@ namespace Dataisland.MQ
                     cfg.ReceiveEndpoint(attribute.Queue, e =>
                     {
                         e.ConfigureConsumeTopology = true;
-                        e.PrefetchCount = attribute.PrefetchCount;
-                        if (attribute.ConcurrentMessageLimit > 0)
-                            e.ConcurrentMessageLimit = attribute.ConcurrentMessageLimit;
+
+                        // Clamp per-consumer concurrency to the global cap (when set). Lets a
+                        // small single-node customer throttle CPU-bound consumers without
+                        // touching the per-consumer attribute (which large deployments keep).
+                        var cap = options.ConsumerConcurrencyCap;
+                        var prefetch = cap > 0 ? Math.Min(attribute.PrefetchCount, cap) : attribute.PrefetchCount;
+                        var concurrency = attribute.ConcurrentMessageLimit > 0
+                            ? (cap > 0 ? Math.Min(attribute.ConcurrentMessageLimit, cap) : attribute.ConcurrentMessageLimit)
+                            : (cap > 0 ? cap : 0);
+
+                        e.PrefetchCount = prefetch;
+                        if (concurrency > 0)
+                            e.ConcurrentMessageLimit = concurrency;
                         e.Durable = attribute.Durable;
                         e.AutoDelete = attribute.AutoDelete;
 

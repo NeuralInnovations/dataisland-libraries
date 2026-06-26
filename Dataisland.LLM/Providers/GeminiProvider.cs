@@ -169,6 +169,11 @@ public class GeminiProvider : ILlmProvider
         var config = new GenerateContentConfig
         {
             Temperature = request.Temperature,
+            // TEST (noise reduction): fixed seed for best-effort reproducibility. With temperature 0,
+            // a constant seed makes Gemini return the same output for the same prompt across runs as
+            // far as Google's best-effort determinism allows. Hardcoded for the dev experiment; if it
+            // measurably cuts the audit run-to-run variance we'll wire it through config properly.
+            Seed = 42,
             // Default: 0 (thinking disabled). Explicit opt-in via ModelConfig.ThinkingBudget.
             // Pro ignores 0 and enforces a 128-token mandatory minimum — that's Google's API,
             // not ours. If you want more thinking on Pro for a specific tier, set thinkingBudget

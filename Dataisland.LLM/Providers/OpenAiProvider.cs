@@ -142,4 +142,12 @@ public class OpenAiProvider : ILlmProvider
 
         return messages;
     }
+
+    // OpenAI caches prompt prefixes automatically (no explicit cache handle), so there is nothing
+    // to create/reference here. Returning null makes callers send the full prompt as before.
+    public Task<string?> CreateContextCacheAsync(
+        string? systemInstruction, IReadOnlyList<LlmMessage> contents, TimeSpan ttl,
+        CancellationToken ct = default) => Task.FromResult<string?>(null);
+
+    public Task DeleteContextCacheAsync(string cacheName, CancellationToken ct = default) => Task.CompletedTask;
 }

@@ -183,7 +183,13 @@ public class GeminiProvider : ILlmProvider
         if (request.MaxTokens.HasValue)
             config.MaxOutputTokens = request.MaxTokens.Value;
 
-        if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
+        // A context cache already carries the system instruction + shared prefix; Gemini rejects
+        // a per-request SystemInstruction alongside a cache, so the two are mutually exclusive.
+        if (!string.IsNullOrWhiteSpace(request.CachedContentName))
+        {
+            config.CachedContent = request.CachedContentName;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.SystemPrompt))
         {
             config.SystemInstruction = new Content
             {
@@ -251,6 +257,54 @@ public class GeminiProvider : ILlmProvider
         }
 
         return contents;
+    }
+
+    public async Task<string?> CreateContextCacheAsync(
+        string? systemInstruction, IReadOnlyList<LlmMessage> contents, TimeSpan ttl,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var config = new CreateCachedContentConfig
+            {
+                // Reuse the same content-shaping as a normal request so the cached prefix is
+                // byte-identical to what an uncached call would send.
+                Contents = BuildContents(new LlmRequest(_model, contents)),
+                Ttl = $"{(int)ttl.TotalSeconds}s"
+            };
+
+            if (!string.IsNullOrWhiteSpace(systemInstruction))
+                config.SystemInstruction = new Content { Parts = [new Part { Text = systemInstruction }] };
+
+            var cache = await _client.Caches.CreateAsync(model: _model, config: config);
+
+            _logger.LogInformation(
+                "Gemini context cache created: name={Name} model={Model} ttl={Ttl}s cachedTokens={Tokens}",
+                cache?.Name, _model, (int)ttl.TotalSeconds, cache?.UsageMetadata?.TotalTokenCount);
+            return cache?.Name;
+        }
+        catch (Exception ex)
+        {
+            // Caching is a pure cost optimisation. A failure here (content below the model's
+            // minimum cacheable size, quota, transient API error) must NEVER break the case —
+            // return null so the caller falls back to sending the full prompt uncached.
+            _logger.LogWarning(ex, "Gemini context cache create failed — using uncached prompts for this case");
+            return null;
+        }
+    }
+
+    public async Task DeleteContextCacheAsync(string cacheName, CancellationToken ct = default)
+    {
+        try
+        {
+            await _client.Caches.DeleteAsync(name: cacheName);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: caches self-expire at their TTL, so a failed delete only wastes storage
+            // for a few minutes. Debug-level so it never adds noise to the case log.
+            _logger.LogDebug(ex, "Gemini context cache delete failed (self-expires at TTL): {Name}", cacheName);
+        }
     }
 
     private string ExtractText(GenerateContentResponse response)

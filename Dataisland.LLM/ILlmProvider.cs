@@ -4,6 +4,22 @@ public interface ILlmProvider
 {
     Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default);
     IAsyncEnumerable<string> CompleteStreamingAsync(LlmRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// Create a provider-side context cache holding a fixed prefix (system instruction +
+    /// shared content) that subsequent requests reuse at a steep discount (Gemini bills cached
+    /// input at ~25%). Returns an opaque cache handle to pass back via
+    /// <see cref="LlmRequest.CachedContentName"/>, or <c>null</c> when the provider/model does
+    /// not support explicit caching (caller then just sends the full prompt as before). The
+    /// cache is tied to THIS provider's model — never reuse it across a tier/model fallback.
+    /// </summary>
+    Task<string?> CreateContextCacheAsync(
+        string? systemInstruction, IReadOnlyList<LlmMessage> contents, TimeSpan ttl,
+        CancellationToken ct = default);
+
+    /// <summary>Best-effort delete of a cache from <see cref="CreateContextCacheAsync"/>. Safe to
+    /// skip (caches self-expire at TTL); failures must not surface to the caller.</summary>
+    Task DeleteContextCacheAsync(string cacheName, CancellationToken ct = default);
 }
 
 public record LlmRequest(
@@ -22,6 +38,15 @@ public record LlmRequest(
 
     /// <summary>Schema name for providers that require it (e.g. OpenAI json_schema format).</summary>
     public string? JsonSchemaName { get; init; }
+
+    /// <summary>
+    /// When set, the provider references this context cache (from
+    /// <see cref="ILlmProvider.CreateContextCacheAsync"/>) instead of re-sending its prefix.
+    /// The cache already carries the system instruction, so <see cref="SystemPrompt"/> MUST be
+    /// null when this is set (Gemini rejects a per-request system instruction alongside a cache);
+    /// <see cref="Messages"/> here are the live, per-call contents appended after the cached prefix.
+    /// </summary>
+    public string? CachedContentName { get; init; }
 }
 
 public record LlmMessage(string Role, string Content)

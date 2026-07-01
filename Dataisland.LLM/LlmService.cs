@@ -56,11 +56,25 @@ public class LlmService : ILlmService
             .Build());
     }
 
+    public Task<string?> CreateContextCacheAsync(ModelTier tier, string? systemInstruction,
+        IReadOnlyList<LlmMessage> contents, TimeSpan ttl, CancellationToken ct = default)
+    {
+        var config = GetConfig(tier);
+        return GetOrCreateProvider(config).CreateContextCacheAsync(systemInstruction, contents, ttl, ct);
+    }
+
+    public Task DeleteContextCacheAsync(ModelTier tier, string cacheName, CancellationToken ct = default)
+    {
+        var config = GetConfig(tier);
+        return GetOrCreateProvider(config).DeleteContextCacheAsync(cacheName, ct);
+    }
+
     public async Task<LlmResponse> CompleteAsync(
         ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         TimeSpan? timeout = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? cachedContentName = null)
     {
         var config = GetConfig(tier);
         var provider = GetOrCreateProvider(config);
@@ -71,7 +85,10 @@ public class LlmService : ILlmService
             Temperature: temperature ?? config.Temperature,
             MaxTokens: maxTokens ?? config.MaxTokens,
             SystemPrompt: systemPrompt
-        );
+        )
+        {
+            CachedContentName = cachedContentName
+        };
 
         var tierName = tier.ToString();
         var effectiveTimeoutSeconds = timeout?.TotalSeconds > 0 ? timeout.Value.TotalSeconds : config.TimeoutSeconds;
@@ -172,7 +189,8 @@ public class LlmService : ILlmService
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string[]>? propertyEnums = null,
-        CancellationToken ct = default) where T : class
+        CancellationToken ct = default,
+        string? cachedContentName = null) where T : class
     {
         var config = GetConfig(tier);
         var supportsJsonSchema = SupportsJsonSchema(config);
@@ -199,12 +217,15 @@ public class LlmService : ILlmService
             Messages: messages,
             Temperature: temperature ?? config.Temperature,
             MaxTokens: maxTokens ?? config.MaxTokens,
-            SystemPrompt: enhancedSystemPrompt
+            // When cached, the system instruction lives in the cache — drop the per-request one
+            // (Gemini rejects both together). Schema/response-format stay per-request.
+            SystemPrompt: string.IsNullOrWhiteSpace(cachedContentName) ? enhancedSystemPrompt : null
         )
         {
             ResponseFormat = supportsJsonSchema ? LlmResponseFormat.JsonSchema : LlmResponseFormat.Json,
             JsonSchema = schema,
-            JsonSchemaName = typeName
+            JsonSchemaName = typeName,
+            CachedContentName = cachedContentName
         };
 
         var tierName = tier.ToString();

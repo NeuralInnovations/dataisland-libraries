@@ -12,10 +12,30 @@ public interface ILlmService
     /// tier timeout is meaningless there and just multiplies wasted time per retry).
     /// When unset, the tier's configured timeout applies.
     /// </summary>
+    /// <para>
+    /// <paramref name="cachedContentName"/> references a provider context cache from
+    /// <see cref="CreateContextCacheAsync"/>: its cached prefix (system instruction + shared
+    /// content) is billed at ~25% and MUST be omitted from <paramref name="messages"/>/
+    /// <paramref name="systemPrompt"/>. Only honoured on the primary tier — a Backup fallback
+    /// runs a different model and drops the cache automatically.
+    /// </para>
     Task<LlmResponse> CompleteAsync(ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         TimeSpan? timeout = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? cachedContentName = null);
+
+    /// <summary>
+    /// Create a provider context cache for <paramref name="tier"/>'s model holding a shared prefix
+    /// reused across many calls in one case. Returns the cache handle to pass back as
+    /// <c>cachedContentName</c>, or <c>null</c> when the provider/model can't cache (caller then
+    /// sends full prompts). Use the returned handle only with the SAME tier.
+    /// </summary>
+    Task<string?> CreateContextCacheAsync(ModelTier tier, string? systemInstruction,
+        IReadOnlyList<LlmMessage> contents, TimeSpan ttl, CancellationToken ct = default);
+
+    /// <summary>Best-effort delete of a cache from <see cref="CreateContextCacheAsync"/>.</summary>
+    Task DeleteContextCacheAsync(ModelTier tier, string cacheName, CancellationToken ct = default);
 
     /// <summary>
     /// Call LLM and parse the response into a typed object.
@@ -35,7 +55,8 @@ public interface ILlmService
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string[]>? propertyEnums = null,
-        CancellationToken ct = default) where T : class;
+        CancellationToken ct = default,
+        string? cachedContentName = null) where T : class;
 
     IAsyncEnumerable<string> CompleteStreamingAsync(ModelTier tier, IReadOnlyList<LlmMessage> messages,
         string? systemPrompt = null, float? temperature = null, int? maxTokens = null,

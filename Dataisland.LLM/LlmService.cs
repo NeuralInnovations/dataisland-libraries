@@ -10,7 +10,7 @@ namespace Dataisland.LLM;
 public class LlmService : ILlmService
 {
     private readonly LlmOptions _options;
-    private readonly Dictionary<string, ILlmProvider> _providers = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ILlmProvider> _providers = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ResiliencePipeline> _circuitBreakers = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LlmService> _logger;
@@ -492,18 +492,17 @@ public class LlmService : ILlmService
     {
         var key = $"{config.Provider}:{config.Model}:{config.BaseUrl}";
 
-        if (!_providers.TryGetValue(key, out var provider))
+        // ConcurrentDictionary + GetOrAdd: multiple cases process in parallel and hit a cold
+        // provider cache at once; a plain Dictionary corrupts under that race (observed as
+        // "non-concurrent collections must have exclusive access" on a fresh pod under load).
+        // The factory may run more than once on contention, but that only wastes a throwaway
+        // provider instance — GetOrAdd still stores exactly one.
+        return _providers.GetOrAdd(key, _ => config.Provider.ToLowerInvariant() switch
         {
-            provider = config.Provider.ToLowerInvariant() switch
-            {
-                "openai" or "anthropic" or "gpt" or "azure" => new OpenAiProvider(config, _loggerFactory.CreateLogger<OpenAiProvider>()),
-                "gemini" or "google" => new GeminiProvider(config, _loggerFactory.CreateLogger<GeminiProvider>()),
-                _ => throw new NotSupportedException($"LLM provider '{config.Provider}' not supported")
-            };
-            _providers[key] = provider;
-        }
-
-        return provider;
+            "openai" or "anthropic" or "gpt" or "azure" => new OpenAiProvider(config, _loggerFactory.CreateLogger<OpenAiProvider>()),
+            "gemini" or "google" => new GeminiProvider(config, _loggerFactory.CreateLogger<GeminiProvider>()),
+            _ => throw new NotSupportedException($"LLM provider '{config.Provider}' not supported")
+        });
     }
 }
 

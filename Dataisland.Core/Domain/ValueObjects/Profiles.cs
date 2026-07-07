@@ -55,6 +55,34 @@ public class OrganizationProfile : DescriptionProfile
     /// </summary>
     [BsonElement("processingPausedAt")]
     public DateTime? ProcessingPausedAt { get; set; }
+
+    /// <summary>
+    /// Third-party integration settings for this organisation (admin-configured). Defaults to a
+    /// fresh instance so orgs without the field in Mongo deserialize cleanly and integrations
+    /// read as "off". Surfaced through GET /organizations/{id} for the frontend to react to.
+    /// </summary>
+    [BsonElement("integrations")]
+    public OrganizationIntegrations Integrations { get; set; } = new();
+}
+
+/// <summary>
+/// Per-organisation third-party integration toggles. First integration: DocDream — when enabled,
+/// the frontend renders the patient id (persisted MedicalData.PatientId) as a deep link into the
+/// DocDream desktop app via its custom URL scheme <c>docdream://patient/&lt;id&gt;</c> (the literal
+/// token <c>{patientId}</c> in the template is replaced with the URL-encoded id).
+/// </summary>
+public class OrganizationIntegrations
+{
+    [BsonElement("docDreamEnabled")]
+    public bool DocDreamEnabled { get; set; }
+
+    /// <summary>
+    /// Optional override for the DocDream patient deep-link template. Default (when null/empty)
+    /// is the fixed scheme <c>docdream://patient/{patientId}</c> applied by the frontend. Kept
+    /// per-org as an escape hatch; the admin UI only exposes the on/off toggle.
+    /// </summary>
+    [BsonElement("docDreamPatientUrlTemplate")]
+    public string? DocDreamPatientUrlTemplate { get; set; }
 }
 
 public class UserProfile : BasicProfile

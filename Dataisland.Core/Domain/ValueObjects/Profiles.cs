@@ -15,6 +15,10 @@ public class DescriptionProfile : BasicProfile
     public string Description { get; set; } = string.Empty;
 }
 
+// Forward-compat: tolerate profile fields written by a NEWER service version. Without this, a
+// service running an older Core (e.g. flow lagging api) threw on deserialize the moment api
+// persisted a new field like `integrations` — an additive change turned into a processing outage.
+[BsonIgnoreExtraElements]
 public class OrganizationProfile : DescriptionProfile
 {
     [BsonElement("limitSegmentKey")]

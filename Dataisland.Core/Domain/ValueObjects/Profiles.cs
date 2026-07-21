@@ -67,6 +67,16 @@ public class OrganizationProfile : DescriptionProfile
     /// </summary>
     [BsonElement("integrations")]
     public OrganizationIntegrations Integrations { get; set; } = new();
+
+    /// <summary>
+    /// Approximate per-category clinic prices (admin-configured) used by the business-impact
+    /// dashboard to estimate potential revenue lost when a doctor omits a mandatory prescription,
+    /// referral/consultation or follow-up. Defaults to a fresh instance (all prices 0 = "not
+    /// configured yet" → losses read as 0) so orgs without the field deserialize cleanly.
+    /// Surfaced through GET /organizations/{id} for the settings UI.
+    /// </summary>
+    [BsonElement("tariffs")]
+    public OrganizationTariffs Tariffs { get; set; } = new();
 }
 
 /// <summary>
@@ -87,6 +97,67 @@ public class OrganizationIntegrations
     /// </summary>
     [BsonElement("docDreamPatientUrlTemplate")]
     public string? DocDreamPatientUrlTemplate { get; set; }
+}
+
+/// <summary>
+/// Per-organisation approximate prices for the business-impact dashboard. A missed item's
+/// estimated loss = (number of cases it was omitted in) × its price. Pricing is HYBRID: an exact
+/// per-service price in <see cref="Services"/> wins; otherwise the item falls back to the average
+/// price of its category below. All prices default to 0 ("not configured"); when everything is 0
+/// the dashboard shows zero losses and prompts the admin to fill them in. <see cref="Currency"/>
+/// is a display code (e.g. "UAH") passed through to the frontend for formatting — no FX conversion.
+/// </summary>
+public class OrganizationTariffs
+{
+    [BsonElement("currency")]
+    public string Currency { get; set; } = "UAH";
+
+    /// <summary>Fallback average price of a consultation / specialist referral (missing referral or route).</summary>
+    [BsonElement("consultationPrice")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal ConsultationPrice { get; set; }
+
+    /// <summary>Fallback average price of a diagnostic examination (missing mandatory examination).</summary>
+    [BsonElement("examinationPrice")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal ExaminationPrice { get; set; }
+
+    /// <summary>Fallback average price attributed to a prescribed medication (missing mandatory medication).</summary>
+    [BsonElement("medicationPrice")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal MedicationPrice { get; set; }
+
+    /// <summary>Fallback average price of a repeat/follow-up visit (missing follow-up).</summary>
+    [BsonElement("followUpPrice")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal FollowUpPrice { get; set; }
+
+    /// <summary>
+    /// Exact per-service price overrides (admin-configured, discovered from analytics). Each entry
+    /// prices one concrete service name within a category; when a missed item's normalised name +
+    /// category matches an entry, its price is used instead of the category fallback above. Empty
+    /// by default. Matching is case/whitespace-insensitive (see BusinessImpactCalculator).
+    /// </summary>
+    [BsonElement("services")]
+    public List<ServiceTariff> Services { get; set; } = [];
+}
+
+/// <summary>
+/// One exact per-service price override for the business-impact dashboard. <see cref="Name"/> is
+/// the concrete service/drug/examination name as it appears in analytics; <see cref="Category"/>
+/// is one of consultation | examination | medication | followUp (which fallback it overrides).
+/// </summary>
+public class ServiceTariff
+{
+    [BsonElement("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [BsonElement("category")]
+    public string Category { get; set; } = string.Empty;
+
+    [BsonElement("price")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal Price { get; set; }
 }
 
 public class UserProfile : BasicProfile

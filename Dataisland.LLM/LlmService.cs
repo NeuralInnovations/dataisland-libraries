@@ -406,6 +406,8 @@ public class LlmService : ILlmService
     private static void RecordMetrics(ModelConfig config, string tier, LlmResponse response, TimeSpan elapsed)
     {
         var labels = new[] { response.Model, tier, config.Provider };
+        var phase = LlmPhaseContext.Current;
+        LlmMetrics.PhaseRequestsTotal.WithLabels(phase, response.Model, tier).Inc();
 
         LlmMetrics.PromptTokensTotal.WithLabels(labels).Inc(response.PromptTokens);
         LlmMetrics.CompletionTokensTotal.WithLabels(labels).Inc(response.CompletionTokens);
@@ -435,7 +437,9 @@ public class LlmService : ILlmService
             LlmMetrics.OutputCostDollarsTotal.WithLabels(labels).Inc((double)outputCost);
             if (reasoningCost > 0)
                 LlmMetrics.ReasoningCostDollarsTotal.WithLabels(labels).Inc((double)reasoningCost);
-            LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)(inputCost + outputCost + reasoningCost));
+            var totalCost = inputCost + outputCost + reasoningCost;
+            LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)totalCost);
+            LlmMetrics.PhaseCostDollarsTotal.WithLabels(phase, response.Model, tier).Inc((double)totalCost);
         }
     }
 

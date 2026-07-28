@@ -57,6 +57,23 @@ public static class LlmMetrics
         "Total LLM requests by outcome",
         ["model", "tier", "provider", "status"]);
 
+    // Per-phase breakdown (additive to the existing model/tier/provider counters — separate metric
+    // so existing dashboards are untouched). "phase" is the logical operation: case sub-steps
+    // ("case:GeneratePerDiagnosisRecommendationsAsync", "case:SearchProtocolForDiagnosisAsync", …)
+    // and the analytics flows ("periodic_analytics", "general_analytics", "anamnesis"). Answers
+    // "which phase / which analytics kind eats the money" at a glance.
+    private static readonly string[] PhaseLabels = ["phase", "model", "tier"];
+
+    public static readonly Counter PhaseCostDollarsTotal = Metrics.CreateCounter(
+        "llm_phase_cost_dollars_total",
+        "Estimated LLM cost in dollars attributed to the logical phase driving the call.",
+        PhaseLabels);
+
+    public static readonly Counter PhaseRequestsTotal = Metrics.CreateCounter(
+        "llm_phase_requests_total",
+        "LLM request count attributed to the logical phase driving the call.",
+        PhaseLabels);
+
     public static readonly Histogram RequestDurationSeconds = Metrics.CreateHistogram(
         "llm_request_duration_seconds",
         "Duration of LLM requests in seconds",

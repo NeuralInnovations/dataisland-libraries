@@ -262,12 +262,36 @@ public class LlmService : ILlmService
                 // Net: 1 billed call saved per parse-failure event.
                 if (parsed is null && tier != ModelTier.Backup)
                 {
+                    // Runaway repetition: the model got stuck emitting a long run of one character
+                    // (e.g. thousands of tabs in a field), blew MaxTokens and truncated the JSON. This
+                    // is a sampling artefact, not deterministic garbage — but at temperature 0 a plain
+                    // re-sample reproduces it, so retry the SAME tier once with a raised temperature to
+                    // break the loop before spending a Backup call. Containing the failure to THIS call
+                    // is what stops the whole case from failing → being redelivered → reprocessed 3-9×
+                    // (the observed Dobrobut overpay spike). Non-degenerate garbage still skips the
+                    // same-tier retry (a re-sample wouldn't help) and goes straight to Backup as before.
+                    var degenerate = IsDegenerateResponse(response.Content);
+                    if (degenerate && attempt < retryDelays.Length)
+                    {
+                        LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "retry").Inc();
+                        _logger.LogWarning(
+                            "Degenerate/looping response for tier {Tier}<{Type}> (len={Len}) — same-tier retry with raised temperature to break the loop",
+                            tier, typeName, response.Content.Length);
+                        request = request with { Temperature = Math.Max(0.5f, request.Temperature + 0.4f) };
+                        continue;
+                    }
+
                     _logger.LogWarning(
-                        "LLM returned unparseable JSON for tier {Tier}<{Type}> — falling straight to Backup (no same-tier retry). Raw: {Raw}",
+                        "LLM returned unparseable JSON for tier {Tier}<{Type}> — falling straight to Backup. Raw: {Raw}",
                         tier, typeName,
                         response.Content.Length > 200 ? response.Content[..200] + "..." : response.Content);
                     LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "parse_fallback").Inc();
-                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                    // On a degenerate loop, raise the Backup temperature too so it doesn't reproduce
+                    // the same deterministic repetition.
+                    var backupTemperature = degenerate
+                        ? Math.Max(0.5f, (temperature ?? config.Temperature) + 0.4f)
+                        : temperature;
+                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, backupTemperature, maxTokens, timeout, propertyEnums, ct);
                 }
 
                 if (attempt > 0)
@@ -401,6 +425,28 @@ public class LlmService : ILlmService
         {
             yield return token;
         }
+    }
+
+    // Heuristic for a repetition-loop response: the model emitted a long run of one character
+    // (whitespace or otherwise), typically hitting MaxTokens and truncating the JSON. A run of
+    // >= 40 identical chars is well past anything valid JSON needs (indentation is short) and is
+    // the signature of the degenerate loop we retry with a raised temperature.
+    private static bool IsDegenerateResponse(string? content)
+    {
+        if (string.IsNullOrEmpty(content) || content.Length < 200) return false;
+        var run = 1;
+        for (var i = 1; i < content.Length; i++)
+        {
+            if (content[i] == content[i - 1])
+            {
+                if (++run >= 40) return true;
+            }
+            else
+            {
+                run = 1;
+            }
+        }
+        return false;
     }
 
     private static void RecordMetrics(ModelConfig config, string tier, LlmResponse response, TimeSpan elapsed)

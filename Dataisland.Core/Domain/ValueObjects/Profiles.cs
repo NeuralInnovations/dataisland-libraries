@@ -77,6 +77,34 @@ public class OrganizationProfile : DescriptionProfile
     /// </summary>
     [BsonElement("tariffs")]
     public OrganizationTariffs Tariffs { get; set; } = new();
+
+    /// <summary>
+    /// True when this organisation is a self-serve demo/trial org: it was created through the public
+    /// trial signup path (no developer gate) and runs under a case quota (<see cref="TrialCaseQuota"/>)
+    /// plus low spend caps. A trial org becomes a paid org ONLY through the server-side, billing-gated
+    /// activation path — a trial user (even its own Admin) can NEVER lift its own limits or upgrade
+    /// itself. Defaults to false so existing orgs deserialize as non-trial (paid) with no migration.
+    /// </summary>
+    [BsonElement("isTrial")]
+    public bool IsTrial { get; set; }
+
+    /// <summary>
+    /// Maximum number of medical cases a trial org may submit (lifetime, not monthly). Enforced at
+    /// case intake — once the org's case count reaches this, new submissions are refused and the
+    /// frontend shows the paywall. Demo-seed cases (CaseId prefix "DEMO-") do NOT count. Null means
+    /// no case quota (paid orgs, or trial orgs with an explicitly unlimited allowance). Only meaningful
+    /// when <see cref="IsTrial"/> is true. Canonical trial value: 100.
+    /// </summary>
+    [BsonElement("trialCaseQuota")]
+    public int? TrialCaseQuota { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when the trial started (org created via the trial path). Null for non-trial orgs
+    /// and for orgs created before this field existed. Used for trial-age metrics and optional
+    /// time-based expiry; not enforced by itself.
+    /// </summary>
+    [BsonElement("trialStartedAt")]
+    public DateTime? TrialStartedAt { get; set; }
 }
 
 /// <summary>

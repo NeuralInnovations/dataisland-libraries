@@ -110,18 +110,29 @@ public class GeminiProvider : ILlmProvider
             && finishReason != FinishReason.MAX_TOKENS
             && finishReason != FinishReason.FINISH_REASON_UNSPECIFIED)
         {
+            // RECITATION belongs here, not below: the model refused because the output would
+            // reproduce memorised text — a decision about CONTENT, not a sick service. Treated as
+            // a generic fault it poisoned the shared circuit breaker: OCR of published clinical
+            // protocols (МОЗ) trips RECITATION on a few pages, the breaker opens for the whole
+            // Vision tier, and every OTHER document then fails instantly with "no text could be
+            // recognized". Observed on the Denis protocol upload: 42 RECITATION refusals took 27
+            // unrelated files down with them. As a content block it skips retries (re-asking the
+            // same model for the same page yields the same refusal) and falls back to Backup,
+            // which is a different model and may not have memorised the document.
             if (finishReason is FinishReason.SAFETY
                 or FinishReason.PROHIBITED_CONTENT
                 or FinishReason.BLOCKLIST
                 or FinishReason.SPII
                 or FinishReason.IMAGE_SAFETY
-                or FinishReason.IMAGE_PROHIBITED_CONTENT)
+                or FinishReason.IMAGE_PROHIBITED_CONTENT
+                or FinishReason.RECITATION)
             {
                 throw new LlmContentBlockedException(
                     $"Gemini content filtered: finishReason={finishReason}");
             }
 
-            // RECITATION, LANGUAGE, OTHER, MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL
+            // LANGUAGE, OTHER, MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL — these really are
+            // faults worth retrying and worth counting against the breaker.
             throw new InvalidOperationException(
                 $"Gemini finished without usable output: finishReason={finishReason}");
         }

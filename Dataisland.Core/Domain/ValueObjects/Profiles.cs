@@ -107,6 +107,65 @@ public class OrganizationProfile : DescriptionProfile
     /// </summary>
     [BsonElement("trialStartedAt")]
     public DateTime? TrialStartedAt { get; set; }
+
+    /// <summary>
+    /// Quality-score thresholds that drive the "alarm scale" in the new UX (critical / warning / ok).
+    /// Defaults to a fresh instance carrying SERVER-PROVIDED default thresholds (overall 3.5,
+    /// critical 2.5, per-aspect defaults) with <see cref="QualityThresholds.Configured"/> = false, so
+    /// every screen renders real numbers instead of "0% / not configured" while still letting the UI
+    /// nudge the admin to confirm/tune. A PUT sets Configured = true. Orgs without the field in Mongo
+    /// deserialize cleanly to these defaults.
+    /// </summary>
+    [BsonElement("qualityThresholds")]
+    public QualityThresholds QualityThresholds { get; set; } = new();
+}
+
+/// <summary>
+/// Per-organisation quality-score thresholds (scores are on a 0–5 scale). Two org-wide levels drive
+/// three alarm bands with no extra frontend logic: at/above <see cref="Overall"/> = ok; between
+/// <see cref="Critical"/> and Overall = warning; below Critical = critical. <see cref="ByAspect"/>
+/// holds optional per-scale overrides (keys: medication | examination | lifestyle | …) and
+/// <see cref="ByDepartment"/> optional per-department overrides. <see cref="Configured"/> is false
+/// until an admin saves thresholds — the values are still the server defaults so screens never show 0.
+/// </summary>
+public class QualityThresholds
+{
+    [BsonElement("configured")]
+    public bool Configured { get; set; }
+
+    [BsonElement("overall")]
+    public double Overall { get; set; } = 3.5;
+
+    [BsonElement("critical")]
+    public double Critical { get; set; } = 2.5;
+
+    [BsonElement("byAspect")]
+    public Dictionary<string, double> ByAspect { get; set; } = new()
+    {
+        ["medication"] = 3.5,
+        ["examination"] = 3.0,
+        ["lifestyle"] = 2.0
+    };
+
+    [BsonElement("byDepartment")]
+    public List<DepartmentThreshold> ByDepartment { get; set; } = [];
+}
+
+/// <summary>One department's threshold override. <see cref="Configured"/> distinguishes an explicit
+/// per-department setting from the inherited org-wide defaults.</summary>
+public class DepartmentThreshold
+{
+    [BsonElement("departmentId")]
+    public string DepartmentId { get; set; } = string.Empty;
+
+    [BsonElement("configured")]
+    public bool Configured { get; set; }
+
+    [BsonElement("overall")]
+    public double Overall { get; set; } = 3.5;
+
+    [BsonElement("critical")]
+    public double Critical { get; set; } = 2.5;
 }
 
 /// <summary>

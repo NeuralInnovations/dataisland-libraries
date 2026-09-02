@@ -20,6 +20,20 @@ public interface IElasticClient
     Task BulkIndexAsync<T>(string indexName, IEnumerable<(string Id, T Document)> documents, CancellationToken ct = default);
     Task<int> CopyByFileIdAsync(string sourceIndex, string targetIndex, string fileId, CancellationToken ct = default);
     Task<long> UpdateFileTypeByFileIdsAsync(string indexName, IReadOnlyCollection<string> fileIds, int fileType, CancellationToken ct = default);
+
+    /// <summary>
+    /// Writes regenerated metadata (ICD codes, summary, metadata blob, document date) into every
+    /// chunk of one file. Null arguments are left untouched. No re-parse or re-embed is needed:
+    /// the chunk vector comes from `text`, which metadata regeneration does not change.
+    /// </summary>
+    Task<long> UpdateFileMetadataByFileIdAsync(
+        string indexName,
+        string fileId,
+        IReadOnlyCollection<string>? icd10Codes,
+        string? summary,
+        string? metadata,
+        string? documentDate,
+        CancellationToken ct = default);
     Task DeleteDocumentAsync(string indexName, string docId, CancellationToken ct = default);
     Task DeleteByFileIdAsync(string indexName, string fileId, CancellationToken ct = default);
 

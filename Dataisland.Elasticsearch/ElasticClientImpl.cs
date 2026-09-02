@@ -268,6 +268,101 @@ public class ElasticClientImpl : IElasticClient
         }
     }
 
+    // Push regenerated metadata into a file's existing chunks. The chunk vector is computed from
+    // `text`, which a metadata regeneration never touches, so the whole point here is that nothing
+    // has to be re-parsed or re-embedded: only the scoring/filtering fields change. Mirrors
+    // UpdateFileTypeByFileIdsAsync, which does the same for file_type.
+    public async Task<long> UpdateFileMetadataByFileIdAsync(
+        string indexName,
+        string fileId,
+        IReadOnlyCollection<string>? icd10Codes,
+        string? summary,
+        string? metadata,
+        string? documentDate,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileId) || !await IndexExistsAsync(indexName, ct))
+            return 0;
+
+        await EnsureVectorIndexMappingsAsync(indexName, ct);
+
+        // Only assign what was actually regenerated: a null field means "generation produced
+        // nothing for this", and overwriting a good stored value with null would lose data.
+        var assignments = new List<string>();
+        var parameters = new Dictionary<string, object?>();
+
+        if (icd10Codes is not null)
+        {
+            assignments.Add("ctx._source.icd10_codes = params.icd10Codes;");
+            parameters["icd10Codes"] = icd10Codes.ToArray();
+        }
+        if (summary is not null)
+        {
+            assignments.Add("ctx._source.summary = params.summary;");
+            parameters["summary"] = summary;
+        }
+        if (metadata is not null)
+        {
+            assignments.Add("ctx._source.metadata = params.metadata;");
+            parameters["metadata"] = metadata;
+        }
+        if (documentDate is not null)
+        {
+            assignments.Add("ctx._source.document_date = params.documentDate;");
+            parameters["documentDate"] = documentDate;
+        }
+
+        if (assignments.Count == 0)
+            return 0;
+
+        var body = new
+        {
+            script = new
+            {
+                source = string.Join(" ", assignments),
+                lang = "painless",
+                @params = parameters
+            },
+            query = new
+            {
+                term = new Dictionary<string, string>
+                {
+                    ["file_id"] = fileId
+                }
+            }
+        };
+
+        var path = new Elastic.Transport.EndpointPath(
+            Elastic.Transport.HttpMethod.POST,
+            $"/{Uri.EscapeDataString(indexName)}/_update_by_query?conflicts=proceed&refresh=true&timeout=5m&scroll_size=500");
+        var requestConfiguration = new Elastic.Transport.RequestConfiguration
+        {
+            RequestTimeout = FileTypeUpdateRequestTimeout,
+            MaxRetryTimeout = FileTypeUpdateRequestTimeout,
+            DisableDirectStreaming = true
+        };
+        var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
+            in path,
+            Elastic.Transport.PostData.String(JsonSerializer.Serialize(body)),
+            null, requestConfiguration, ct);
+
+        if (!response.ApiCallDetails.HasSuccessfulStatusCode)
+            throw new InvalidOperationException(
+                BuildFileTypeUpdateError(response, 1, indexName));
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Body);
+            return document.RootElement.TryGetProperty("updated", out var updated) && updated.TryGetInt64(out var value)
+                ? value
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
     private static string BuildFileTypeUpdateError(
         Elastic.Transport.StringResponse response,
         int fileCount,

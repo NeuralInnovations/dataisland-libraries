@@ -128,6 +128,7 @@ public class OrganizationProfile : DescriptionProfile
 /// <see cref="ByDepartment"/> optional per-department overrides. <see cref="Configured"/> is false
 /// until an admin saves thresholds — the values are still the server defaults so screens never show 0.
 /// </summary>
+[BsonIgnoreExtraElements]
 public class QualityThresholds
 {
     [BsonElement("configured")]
@@ -153,6 +154,7 @@ public class QualityThresholds
 
 /// <summary>One department's threshold override. <see cref="Configured"/> distinguishes an explicit
 /// per-department setting from the inherited org-wide defaults.</summary>
+[BsonIgnoreExtraElements]
 public class DepartmentThreshold
 {
     [BsonElement("departmentId")]

@@ -18,6 +18,8 @@ public class DescriptionProfile : BasicProfile
 // Forward-compat: tolerate profile fields written by a NEWER service version. Without this, a
 // service running an older Core (e.g. flow lagging api) threw on deserialize the moment api
 // persisted a new field like `integrations` — an additive change turned into a processing outage.
+// The attribute does NOT reach nested types, so every value object hanging off this profile carries
+// it too — otherwise the next field added inside one of them repeats the same outage one level down.
 [BsonIgnoreExtraElements]
 public class OrganizationProfile : DescriptionProfile
 {
@@ -126,6 +128,7 @@ public class OrganizationProfile : DescriptionProfile
 /// <see cref="ByDepartment"/> optional per-department overrides. <see cref="Configured"/> is false
 /// until an admin saves thresholds — the values are still the server defaults so screens never show 0.
 /// </summary>
+[BsonIgnoreExtraElements]
 public class QualityThresholds
 {
     [BsonElement("configured")]
@@ -151,6 +154,7 @@ public class QualityThresholds
 
 /// <summary>One department's threshold override. <see cref="Configured"/> distinguishes an explicit
 /// per-department setting from the inherited org-wide defaults.</summary>
+[BsonIgnoreExtraElements]
 public class DepartmentThreshold
 {
     [BsonElement("departmentId")]
@@ -172,6 +176,7 @@ public class DepartmentThreshold
 /// DocDream desktop app via its custom URL scheme <c>docdream://patient/&lt;id&gt;</c> (the literal
 /// token <c>{patientId}</c> in the template is replaced with the URL-encoded id).
 /// </summary>
+[BsonIgnoreExtraElements]
 public class OrganizationIntegrations
 {
     [BsonElement("docDreamEnabled")]
@@ -194,6 +199,7 @@ public class OrganizationIntegrations
 /// the dashboard shows zero losses and prompts the admin to fill them in. <see cref="Currency"/>
 /// is a display code (e.g. "UAH") passed through to the frontend for formatting — no FX conversion.
 /// </summary>
+[BsonIgnoreExtraElements]
 public class OrganizationTariffs
 {
     [BsonElement("currency")]
@@ -234,6 +240,7 @@ public class OrganizationTariffs
 /// the concrete service/drug/examination name as it appears in analytics; <see cref="Category"/>
 /// is one of consultation | examination | medication | followUp (which fallback it overrides).
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ServiceTariff
 {
     [BsonElement("name")]
@@ -247,6 +254,7 @@ public class ServiceTariff
     public decimal Price { get; set; }
 }
 
+[BsonIgnoreExtraElements]
 public class UserProfile : BasicProfile
 {
     [BsonElement("email")]

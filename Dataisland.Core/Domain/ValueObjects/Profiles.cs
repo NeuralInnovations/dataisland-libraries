@@ -118,6 +118,15 @@ public class OrganizationProfile : DescriptionProfile
     /// </summary>
     [BsonElement("qualityThresholds")]
     public QualityThresholds QualityThresholds { get; set; } = new();
+
+    /// <summary>
+    /// Server-recorded acceptance of the versioned trial data-processing terms. This belongs to the
+    /// trial organisation rather than browser storage, so the organisation remains identifiable for
+    /// consent evidence and a subsequent data-deletion request. Null keeps organisations created
+    /// before server-side consent recording backward compatible.
+    /// </summary>
+    [BsonElement("trialDataProcessingConsent")]
+    public TrialDataProcessingConsent? TrialDataProcessingConsent { get; set; }
 }
 
 /// <summary>
@@ -168,6 +177,23 @@ public class DepartmentThreshold
 
     [BsonElement("critical")]
     public double Critical { get; set; } = 2.5;
+}
+
+/// <summary>
+/// The authenticated user and server time that accepted a particular version of the trial
+/// data-processing terms. The API, not the browser, supplies <see cref="AcceptedAt"/>.
+/// </summary>
+[BsonIgnoreExtraElements]
+public class TrialDataProcessingConsent
+{
+    [BsonElement("acceptedAt")]
+    public DateTime AcceptedAt { get; set; }
+
+    [BsonElement("textVersion")]
+    public string TextVersion { get; set; } = string.Empty;
+
+    [BsonElement("acceptedByUserId")]
+    public ObjectId AcceptedByUserId { get; set; }
 }
 
 /// <summary>

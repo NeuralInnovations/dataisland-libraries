@@ -415,6 +415,7 @@ public class ElasticClientImpl : IElasticClient
         var filters = BuildSearchFilters<T>(fileIdFilter, fileTypeFilters);
         var response = await _client.SearchAsync<T>(s =>
             s.Index(string.Join(",", indices))
+                .Size(k)
                 .Knn(knn =>
                 {
                     // When filtering by file_id, use more candidates to ensure good recall

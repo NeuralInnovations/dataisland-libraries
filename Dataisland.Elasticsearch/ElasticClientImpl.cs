@@ -15,6 +15,12 @@ public class ElasticClientImpl : IElasticClient
     private readonly ILogger<ElasticClientImpl> _logger;
     private static readonly TimeSpan FileTypeUpdateRequestTimeout = TimeSpan.FromMinutes(5);
 
+    internal ElasticClientImpl(ElasticsearchClient client, ILogger<ElasticClientImpl> logger)
+    {
+        _client = client;
+        _logger = logger;
+    }
+
     public ElasticClientImpl(ElasticsearchOptions options, ILogger<ElasticClientImpl> logger)
     {
         _logger = logger;
@@ -54,7 +60,10 @@ public class ElasticClientImpl : IElasticClient
         return response.IsValidResponse;
     }
 
-    private const string IlmPolicyName = "dataisland-default";
+    // Library indexes contain persistent, mutable content. Index age is not a retention rule.
+    // Use a separate name so older API instances cannot restore deletion on migrated indexes
+    // when they overwrite the legacy dataisland-default policy at startup.
+    private const string IlmPolicyName = "dataisland-persistent-vectors";
 
     public async Task EnsureIlmPolicyAsync(CancellationToken ct = default)
     {
@@ -64,17 +73,8 @@ public class ElasticClientImpl : IElasticClient
                 {
                     "policy": {
                         "phases": {
-                            "warm": {
-                                "min_age": "30d",
-                                "actions": {
-                                    "forcemerge": { "max_num_segments": 1 }
-                                }
-                            },
-                            "delete": {
-                                "min_age": "180d",
-                                "actions": {
-                                    "delete": {}
-                                }
+                            "hot": {
+                                "actions": {}
                             }
                         }
                     }

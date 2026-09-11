@@ -51,6 +51,10 @@ public static class MongoDBRepositoryExtensions
         Func<MongoClientSettings, (IMongoDBProvider, IMongoDBConnection)>? factory = null
     )
     {
+        // Before anything is mapped: a service has to survive reading a document written by a
+        // newer one, or every release becomes order-dependent.
+        MongoConventions.EnsureRegistered();
+
         var url = new MongoUrl(options.ConnectionString);
 
         var settings = MongoClientSettings.FromUrl(url);

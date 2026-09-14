@@ -651,6 +651,44 @@ public class ElasticClientImpl : IElasticClient
             .ToList();
     }
 
+    public async Task<IReadOnlyList<SearchHit<T>>> SearchFileByKeywordsAsync<T>(
+        string[] indices, string fileId, FileKeywordQuery query, int size, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileId))
+            return [];
+
+        var should = new List<Action<QueryDescriptor<T>>>();
+        foreach (var phrase in query.Phrases.Where(p => !string.IsNullOrWhiteSpace(p.Text)))
+        {
+            var text = phrase.Text.Trim();
+            var boost = phrase.Boost;
+            should.Add(q => q.Match(m => m.Field(new Field("text")).Query(text).Boost(boost)));
+        }
+        foreach (var prefix in query.Prefixes.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            // Analyzed tokens are lowercase, and a prefix query does not analyze its input.
+            var value = prefix.Trim().ToLowerInvariant();
+            should.Add(q => q.Prefix(p => p.Field(new Field("text")).Value(value)));
+        }
+        if (should.Count == 0)
+            return [];
+
+        var response = await _client.SearchAsync<T>(s => s
+            .Index(string.Join(",", indices))
+            .Size(Math.Max(1, size))
+            .Query(q => q
+                .Bool(b => b
+                    .Filter(f => f.Term(new TermQuery(new Field("file_id")) { Value = fileId }))
+                    .Should(should.ToArray())
+                    .MinimumShouldMatch(1))), ct);
+
+        if (!response.IsValidResponse) return [];
+
+        return response.Hits
+            .Select(h => new SearchHit<T>(h.Id!, (float)(h.Score ?? 0), h.Source!))
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<SearchHit<T>>> FindEmptyMetadataAsync<T>(
         string[] indices, int size = 10000, CancellationToken ct = default)
     {

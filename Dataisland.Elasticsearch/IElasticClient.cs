@@ -55,6 +55,24 @@ public interface IElasticClient
 
     Task<IReadOnlyList<SearchHit<T>>> FindEmptyMetadataAsync<T>(
         string[] indices, int size = 10000, CancellationToken ct = default);
+
+    /// <summary>
+    /// Keyword (BM25) search over the chunks of ONE file — "find the passages of this document that
+    /// talk about X". Unlike <see cref="MultiSearchAsync{T}"/> it needs no query embedding, so it does
+    /// not wait on the embeddings sidecar and costs milliseconds.
+    /// </summary>
+    Task<IReadOnlyList<SearchHit<T>>> SearchFileByKeywordsAsync<T>(
+        string[] indices, string fileId, FileKeywordQuery query, int size, CancellationToken ct = default);
 }
 
 public record SearchHit<T>(string Id, float Score, T Source);
+
+/// <summary>What to look for inside one file. Any clause may match; more matches rank higher.</summary>
+/// <param name="Phrases">Matched against chunk text, each with its own weight.</param>
+/// <param name="Prefixes">
+/// Word beginnings matched against chunk text. The index uses the standard analyzer, which has no
+/// Ukrainian stemmer, so "лікування" never matches "лікуванні" — a prefix such as "лікуван" does.
+/// </param>
+public record FileKeywordQuery(IReadOnlyList<WeightedText> Phrases, IReadOnlyList<string> Prefixes);
+
+public record WeightedText(string Text, float Boost = 1f);

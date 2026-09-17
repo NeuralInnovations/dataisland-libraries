@@ -483,6 +483,10 @@ public class ElasticClientImpl : IElasticClient
         var filters = BuildSearchFilters<T>(null, fileTypeFilters);
         var response = await _client.SearchAsync<T>(s => s
             .Index(string.Join(",", indices))
+            // A library whose index does not exist yet holds nothing; it must not blank out the
+            // libraries that do exist in the same request (index_not_found fails the whole search).
+            .IgnoreUnavailable(true)
+            .AllowNoIndices(true)
             .Size(metadataResultWindow)
             // De-duplicate at Elasticsearch level: one top hit per file_id.
             .Collapse(new FieldCollapse { Field = new Field("file_id") })
@@ -549,7 +553,15 @@ public class ElasticClientImpl : IElasticClient
                 )
             ), ct);
 
-        if (!response.IsValidResponse) return [];
+        // Re-audit R02: an unreachable or failing cluster used to come back as zero hits, which the
+        // search service answered as Success=true — "the library has no such protocol". Missing indices
+        // are already tolerated above, so anything invalid here is a real failure and must say so.
+        if (!response.IsValidResponse)
+            throw new ElasticsearchSearchFailedException(
+                $"Metadata search failed on [{string.Join(", ", indices)}]: HTTP " +
+                $"{response.ApiCallDetails.HttpStatusCode?.ToString() ?? "<none>"}; " +
+                $"{response.ElasticsearchServerError?.Error?.Type ?? response.ApiCallDetails.OriginalException?.GetType().Name ?? "invalid response"}",
+                response.ApiCallDetails.OriginalException);
 
         return response.Hits
             .Select(h => new SearchHit<T>(h.Id!, (float)(h.Score ?? 0), h.Source!))
@@ -712,3 +724,10 @@ public class ElasticClientImpl : IElasticClient
             .ToList();
     }
 }
+
+/// <summary>
+/// Elasticsearch did not answer a search. Distinct from an empty result on purpose: callers that turn
+/// "nothing found" into a clinical conclusion must be able to tell the two apart.
+/// </summary>
+public sealed class ElasticsearchSearchFailedException(string message, Exception? inner = null)
+    : Exception(message, inner);

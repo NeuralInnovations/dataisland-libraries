@@ -128,6 +128,27 @@ public class LlmService : ILlmService
         CancellationToken ct = default,
         string? cachedContentName = null)
     {
+        var journal = new LlmAttemptJournal();
+        try
+        {
+            return await CompleteAsyncCore(tier, messages, systemPrompt, temperature, maxTokens,
+                timeout, ct, cachedContentName, journal);
+        }
+        catch (Exception ex)
+        {
+            LlmAttemptJournalException.Attach(ex, journal.Snapshot());
+            throw;
+        }
+    }
+
+    private async Task<LlmResponse> CompleteAsyncCore(
+        ModelTier tier, IReadOnlyList<LlmMessage> messages,
+        string? systemPrompt, float? temperature, int? maxTokens,
+        TimeSpan? timeout,
+        CancellationToken ct,
+        string? cachedContentName,
+        LlmAttemptJournal journal)
+    {
         var config = GetConfig(tier);
         var provider = GetOrCreateProvider(config);
         var (fallbackMessages, fallbackSystemPrompt) = WithCachedPrefixInline(messages, systemPrompt, cachedContentName);
@@ -161,9 +182,8 @@ public class LlmService : ILlmService
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
 
-                var response = await GetCircuitBreaker(config).ExecuteAsync(
-                    async token => await provider.CompleteAsync(request, token),
-                    timeoutCts.Token);
+                var response = await ExecuteAttemptAsync(
+                    config, tier, provider, request, timeoutCts.Token, journal);
 
                 sw.Stop();
                 RecordMetrics(config, tierName, response, sw.Elapsed);
@@ -171,7 +191,7 @@ public class LlmService : ILlmService
                 if (attempt > 0)
                     _logger.LogInformation("LLM call succeeded for tier {Tier} on retry attempt {Attempt}", tier, attempt);
 
-                return response;
+                return response with { Attempts = journal.Snapshot() };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -185,7 +205,8 @@ public class LlmService : ILlmService
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
                 _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back to Backup", tier);
-                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsyncCore(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, ct, null, journal);
             }
             catch (LlmContentBlockedException ex) when (tier != ModelTier.Backup)
             {
@@ -193,7 +214,8 @@ public class LlmService : ILlmService
                 // block. Jump straight to Backup (typically a different provider).
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "content_blocked").Inc();
                 _logger.LogWarning(ex, "LLM content blocked on tier {Tier}, skipping retries and falling back to Backup", tier);
-                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsyncCore(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, ct, null, journal);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -205,7 +227,8 @@ public class LlmService : ILlmService
 
                 // Timeout — no point retrying, go to backup
                 if (tier != ModelTier.Backup)
-                    return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
+                    return await CompleteAsyncCore(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                        temperature, maxTokens, timeout, ct, null, journal);
                 throw new TimeoutException($"LLM call timed out after {effectiveTimeoutSeconds}s (model: {config.Model})");
             }
             catch (Exception ex) when (attempt < retryDelays.Length)
@@ -229,7 +252,8 @@ public class LlmService : ILlmService
 
                 _logger.LogWarning(ex, "LLM call failed for tier {Tier} after {Attempts} attempts, falling back to Backup",
                     tier, retryDelays.Length + 1);
-                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsyncCore(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, ct, null, journal);
             }
         }
 
@@ -244,6 +268,28 @@ public class LlmService : ILlmService
         IReadOnlyDictionary<string, string[]>? propertyEnums = null,
         CancellationToken ct = default,
         string? cachedContentName = null) where T : class
+    {
+        var journal = new LlmAttemptJournal();
+        try
+        {
+            return await CompleteAsyncCore<T>(tier, messages, systemPrompt, temperature, maxTokens,
+                timeout, propertyEnums, ct, cachedContentName, journal);
+        }
+        catch (Exception ex)
+        {
+            LlmAttemptJournalException.Attach(ex, journal.Snapshot());
+            throw;
+        }
+    }
+
+    private async Task<LlmResponse<T>> CompleteAsyncCore<T>(
+        ModelTier tier, IReadOnlyList<LlmMessage> messages,
+        string? systemPrompt, float? temperature, int? maxTokens,
+        TimeSpan? timeout,
+        IReadOnlyDictionary<string, string[]>? propertyEnums,
+        CancellationToken ct,
+        string? cachedContentName,
+        LlmAttemptJournal journal) where T : class
     {
         var config = GetConfig(tier);
         var supportsJsonSchema = SupportsJsonSchema(config);
@@ -296,9 +342,8 @@ public class LlmService : ILlmService
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(effectiveTimeoutSeconds));
 
-                var response = await GetCircuitBreaker(config).ExecuteAsync(
-                    async token => await provider.CompleteAsync(request, token),
-                    timeoutCts.Token);
+                var response = await ExecuteAttemptAsync(
+                    config, tier, provider, request, timeoutCts.Token, journal);
 
                 sw.Stop();
                 RecordMetrics(config, tierName, response, sw.Elapsed);
@@ -345,7 +390,8 @@ public class LlmService : ILlmService
                     var backupTemperature = degenerate
                         ? Math.Max(0.5f, (temperature ?? config.Temperature) + 0.4f)
                         : temperature;
-                    return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, backupTemperature, maxTokens, timeout, propertyEnums, ct);
+                    return await CompleteAsyncCore<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                        backupTemperature, maxTokens, timeout, propertyEnums, ct, null, journal);
                 }
 
                 if (attempt > 0)
@@ -359,6 +405,7 @@ public class LlmService : ILlmService
                     CompletionTokens: response.CompletionTokens,
                     Model: response.Model)
                 {
+                    Attempts = journal.Snapshot(),
                     CachedTokens = response.CachedTokens,
                     ReasoningTokens = response.ReasoningTokens
                 };
@@ -373,13 +420,15 @@ public class LlmService : ILlmService
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
                 _logger.LogWarning("LLM circuit breaker is open for tier {Tier}<{Type}>, falling back to Backup", tier, typeName);
-                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsyncCore<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, propertyEnums, ct, null, journal);
             }
             catch (LlmContentBlockedException ex) when (tier != ModelTier.Backup)
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "content_blocked").Inc();
                 _logger.LogWarning(ex, "LLM content blocked on tier {Tier}<{Type}>, skipping retries and falling back to Backup", tier, typeName);
-                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsyncCore<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, propertyEnums, ct, null, journal);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -390,7 +439,8 @@ public class LlmService : ILlmService
                     effectiveTimeoutSeconds, tier, typeName, attempt + 1);
 
                 if (tier != ModelTier.Backup)
-                    return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                    return await CompleteAsyncCore<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                        temperature, maxTokens, timeout, propertyEnums, ct, null, journal);
                 throw new TimeoutException($"LLM call timed out after {effectiveTimeoutSeconds}s (model: {config.Model})");
             }
             catch (Exception ex) when (attempt < retryDelays.Length)
@@ -412,7 +462,8 @@ public class LlmService : ILlmService
 
                 _logger.LogWarning(ex, "LLM call failed for tier {Tier}<{Type}> after {Attempts} attempts, falling back to Backup",
                     tier, typeName, retryDelays.Length + 1);
-                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsyncCore<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt,
+                    temperature, maxTokens, timeout, propertyEnums, ct, null, journal);
             }
         }
 
@@ -442,6 +493,67 @@ public class LlmService : ILlmService
             if (e.InnerException is null) break;
         }
         return "retry";
+    }
+
+    private async Task<LlmResponse> ExecuteAttemptAsync(
+        ModelConfig config,
+        ModelTier tier,
+        ILlmProvider provider,
+        LlmRequest request,
+        CancellationToken ct,
+        LlmAttemptJournal journal)
+    {
+        var attempt = journal.NextAttempt();
+        var startedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            var response = await GetCircuitBreaker(config).ExecuteAsync(
+                async token => await provider.CompleteAsync(request, token), ct);
+            var completedAt = DateTimeOffset.UtcNow;
+            var estimate = _pricingRegistry.Estimate(
+                response.Model,
+                response.PromptTokens,
+                response.CompletionTokens,
+                response.CachedTokens,
+                response.ReasoningTokens,
+                at: completedAt);
+            journal.Append(new LlmAttemptUsage(
+                journal.RequestId,
+                attempt,
+                response.Model,
+                tier,
+                LlmPhaseContext.Current,
+                startedAt,
+                completedAt,
+                response.PromptTokens,
+                response.CompletionTokens,
+                response.CachedTokens,
+                response.ReasoningTokens,
+                estimate.Price,
+                estimate.TotalUsd,
+                "response"));
+            return response;
+        }
+        catch (Exception ex)
+        {
+            var completedAt = DateTimeOffset.UtcNow;
+            journal.Append(new LlmAttemptUsage(
+                journal.RequestId,
+                attempt,
+                config.Model,
+                tier,
+                LlmPhaseContext.Current,
+                startedAt,
+                completedAt,
+                null,
+                null,
+                null,
+                null,
+                _pricingRegistry.GetSnapshot(config.Model, completedAt),
+                null,
+                ex is OperationCanceledException ? "cancelled" : ClassifyTransientError(ex)));
+            throw;
+        }
     }
 
     private static bool SupportsJsonSchema(ModelConfig config)

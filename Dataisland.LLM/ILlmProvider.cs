@@ -65,6 +65,12 @@ public record LlmResponse(
 )
 {
     /// <summary>
+    /// Append-only accounting journal for every provider invocation made to satisfy this logical
+    /// request, including paid responses later discarded by parsing, retry, or Backup fallback.
+    /// </summary>
+    public IReadOnlyList<LlmAttemptUsage> Attempts { get; init; } = [];
+
+    /// <summary>
     /// Tokens served from provider-side prompt cache (0 if no hit). Gemini reports this as
     /// usageMetadata.cachedContentTokenCount; OpenAI as usage.prompt_tokens_details.cached_tokens.
     /// Used to verify prompt caching is actually firing — otherwise we pay full price for the
@@ -95,6 +101,7 @@ public record LlmResponse<T>(
     string Model
 )
 {
+    public IReadOnlyList<LlmAttemptUsage> Attempts { get; init; } = [];
     public int CachedTokens { get; init; }
     public int ReasoningTokens { get; init; }
 }

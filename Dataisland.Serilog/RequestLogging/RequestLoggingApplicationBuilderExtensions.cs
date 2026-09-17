@@ -12,12 +12,15 @@ public static class RequestLoggingApplicationBuilderExtensions
         this IApplicationBuilder app,
         IConfiguration configuration)
     {
-        app.UseMiddleware<SerilogMiddleware>();
-        
         var section = configuration.GetSection("Serilog:RequestLogging");
         var cfg = section.Get<RequestLoggingConfig>() ?? new RequestLoggingConfig();
 
-        Log.Information("[Serilog.RequestLogging] Applying config: DefaultLevel={DefaultLevel}, PathRules={RulesCount}", cfg.DefaultLevel, cfg.PathLevels.Count);
+        Log.Information(
+            "[Serilog.RequestLogging] Applying config: DefaultLevel={DefaultLevel}, PathRules={RulesCount}, CaptureRequestBody={CaptureRequestBody}, CaptureResponseBody={CaptureResponseBody}",
+            cfg.DefaultLevel,
+            cfg.PathLevels.Count,
+            cfg.CaptureRequestBody,
+            cfg.CaptureResponseBody);
 
         var parsedRules = cfg.PathLevels
             .Where(r => !string.IsNullOrWhiteSpace(r.Path) || !string.IsNullOrWhiteSpace(r.Method))
@@ -70,13 +73,19 @@ public static class RequestLoggingApplicationBuilderExtensions
             {
                 diagCtx.Set("ClientIP", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip");
                 // Ensure StatusCode property exists for templates
-                diagCtx.Set("StatusCode", httpContext.Response?.StatusCode);
+                diagCtx.Set("StatusCode", httpContext.Response.StatusCode);
                 if (httpContext.Items.TryGetValue("RequestBody", out var req) && req is string reqStr)
                     diagCtx.Set("RequestBody", reqStr);
                 if (httpContext.Items.TryGetValue("ResponseBody", out var resp) && resp is string respStr)
                     diagCtx.Set("ResponseBody", respStr);
             };
         });
+
+        // Body capture must run inside Serilog's request middleware so its diagnostic properties
+        // are populated before the request completion event is emitted. It is intentionally opt-in:
+        // response capture buffers the response and should only be enabled while diagnosing issues.
+        if (cfg.CaptureRequestBody || cfg.CaptureResponseBody)
+            app.UseMiddleware<SerilogMiddleware>(cfg);
 
         return app;
     }

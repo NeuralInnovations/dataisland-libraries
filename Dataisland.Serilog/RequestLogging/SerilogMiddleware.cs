@@ -3,38 +3,49 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Dataisland.Serilog.RequestLogging;
 
-public class SerilogMiddleware(RequestDelegate next)
+public class SerilogMiddleware(RequestDelegate next, RequestLoggingConfig config)
 {
+    private const int MaximumBodyLimit = 64 * 1024;
+
     public async Task InvokeAsync(HttpContext ctx)
     {
         var diag = ctx.RequestServices.GetService<global::Serilog.IDiagnosticContext>();
 
-        const int reqLimit = 2048;
-        const int respLimit = 4096;
-
         // Request body (JSON only)
-        try
+        if (config.CaptureRequestBody)
         {
-            if (ctx.Request.ContentLength > 0 && (ctx.Request.ContentType?.Contains("application/json") ?? false))
+            try
             {
-                ctx.Request.EnableBuffering();
-                using var reader = new StreamReader(
-                    ctx.Request.Body,
-                    System.Text.Encoding.UTF8,
-                    detectEncodingFromByteOrderMarks: false,
-                    bufferSize: 1024,
-                    leaveOpen: true);
+                if (ctx.Request.ContentLength > 0 && IsJson(ctx.Request.ContentType))
+                {
+                    ctx.Request.EnableBuffering();
+                    using var reader = new StreamReader(
+                        ctx.Request.Body,
+                        System.Text.Encoding.UTF8,
+                        detectEncodingFromByteOrderMarks: false,
+                        bufferSize: 1024,
+                        leaveOpen: true);
 
-                var body = await reader.ReadToEndAsync();
-                ctx.Request.Body.Position = 0;
+                    var body = await ReadLimitedAsync(reader, config.RequestBodyLimit);
+                    ctx.Request.Body.Position = 0;
 
-                if (body.Length > reqLimit) body = body.Substring(0, reqLimit) + "...";
-                diag?.Set("RequestBody", body);
+                    diag?.Set("RequestBody", body);
+                }
+            }
+            catch
+            {
+                // Body capture is diagnostic only and must never break request handling.
+                if (ctx.Request.Body.CanSeek)
+                    ctx.Request.Body.Position = 0;
             }
         }
-        catch { /* ignore body read errors */ }
 
-        // Response body
+        if (!config.CaptureResponseBody)
+        {
+            await next(ctx);
+            return;
+        }
+
         var originalBody = ctx.Response.Body;
         await using var mem = new MemoryStream();
         ctx.Response.Body = mem;
@@ -51,17 +62,43 @@ public class SerilogMiddleware(RequestDelegate next)
             {
                 using var respReader = new StreamReader(mem, System.Text.Encoding.UTF8,
                     detectEncodingFromByteOrderMarks: false, leaveOpen: true);
-                responseBody = await respReader.ReadToEndAsync();
-                if (responseBody.Length > respLimit) responseBody = responseBody.Substring(0, respLimit) + "...";
+                responseBody = await ReadLimitedAsync(respReader, config.ResponseBodyLimit);
             }
-            catch { /* ignore body read errors */ }
+            catch
+            {
+                // Body capture is diagnostic only and must never replace the application response.
+            }
 
             diag?.Set("ResponseBody", responseBody);
             diag?.Set("StatusCode", ctx.Response.StatusCode);
 
             mem.Position = 0;
-            await mem.CopyToAsync(originalBody);
             ctx.Response.Body = originalBody;
+            await mem.CopyToAsync(originalBody);
         }
+    }
+
+    private static bool IsJson(string? contentType) =>
+        contentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true ||
+        contentType?.Contains("+json", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static async Task<string> ReadLimitedAsync(StreamReader reader, int configuredLimit)
+    {
+        var limit = Math.Clamp(configuredLimit, 1, MaximumBodyLimit);
+        var buffer = new char[limit + 1];
+        var charsRead = 0;
+
+        while (charsRead < buffer.Length)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(charsRead, buffer.Length - charsRead));
+            if (read == 0)
+                break;
+
+            charsRead += read;
+        }
+
+        return charsRead > limit
+            ? new string(buffer, 0, limit) + "..."
+            : new string(buffer, 0, charsRead);
     }
 }

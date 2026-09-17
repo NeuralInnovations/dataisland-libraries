@@ -12,6 +12,7 @@ public class LlmService : ILlmService
     private readonly LlmOptions _options;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ILlmProvider> _providers = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ResiliencePipeline> _circuitBreakers = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CachedPrefix> _cachePrefixes = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LlmService> _logger;
 
@@ -56,17 +57,66 @@ public class LlmService : ILlmService
             .Build());
     }
 
-    public Task<string?> CreateContextCacheAsync(ModelTier tier, string? systemInstruction,
+    public async Task<string?> CreateContextCacheAsync(ModelTier tier, string? systemInstruction,
         IReadOnlyList<LlmMessage> contents, TimeSpan ttl, CancellationToken ct = default)
     {
         var config = GetConfig(tier);
-        return GetOrCreateProvider(config).CreateContextCacheAsync(systemInstruction, contents, ttl, ct);
+        var name = await GetOrCreateProvider(config).CreateContextCacheAsync(systemInstruction, contents, ttl, ct);
+        if (name is not null)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var expired in _cachePrefixes.Where(p => p.Value.ExpiresAtUtc <= now).Select(p => p.Key).ToList())
+                _cachePrefixes.TryRemove(expired, out _);
+            _cachePrefixes[name] = new CachedPrefix(systemInstruction, contents.ToArray(), now + ttl);
+        }
+        return name;
     }
 
     public Task DeleteContextCacheAsync(ModelTier tier, string cacheName, CancellationToken ct = default)
     {
+        _cachePrefixes.TryRemove(cacheName, out _);
         var config = GetConfig(tier);
         return GetOrCreateProvider(config).DeleteContextCacheAsync(cacheName, ct);
+    }
+
+    private sealed record CachedPrefix(string? SystemInstruction, IReadOnlyList<LlmMessage> Contents, DateTime ExpiresAtUtc);
+
+    // A context cache belongs to one model, so a Backup fallback (another model) cannot read it — and the
+    // caller left the cached prefix out of its messages on purpose. Without putting that prefix back inline,
+    // the fallback answers a prompt that says "(provided in the shared clinical context above)" with nothing
+    // above it: the patient data and the doctor's prescriptions are simply absent (re-audit R01).
+    private (IReadOnlyList<LlmMessage> Messages, string? SystemPrompt) WithCachedPrefixInline(
+        IReadOnlyList<LlmMessage> messages, string? systemPrompt, string? cachedContentName)
+    {
+        if (string.IsNullOrWhiteSpace(cachedContentName))
+            return (messages, systemPrompt);
+
+        if (!_cachePrefixes.TryGetValue(cachedContentName, out var prefix))
+        {
+            _logger.LogWarning(
+                "Falling back from context cache {Cache}, whose content this process does not hold — the fallback call goes without the shared prefix",
+                cachedContentName);
+            return (messages, systemPrompt);
+        }
+
+        var system = string.IsNullOrWhiteSpace(prefix.SystemInstruction) ? systemPrompt
+            : string.IsNullOrWhiteSpace(systemPrompt) ? prefix.SystemInstruction
+            : prefix.SystemInstruction + "\n\n" + systemPrompt;
+
+        // Same order the cached call had: cached prefix first, then the per-call turn. Adjacent user turns are
+        // joined so providers that expect alternating roles receive one user turn.
+        var merged = new List<LlmMessage>(prefix.Contents.Count + messages.Count);
+        merged.AddRange(prefix.Contents);
+        var rest = messages.AsEnumerable();
+        if (merged.Count > 0 && messages.Count > 0
+            && merged[^1].Role == "user" && messages[0].Role == "user"
+            && merged[^1].Images is null && messages[0].Images is null)
+        {
+            merged[^1] = merged[^1] with { Content = merged[^1].Content + "\n\n" + messages[0].Content };
+            rest = messages.Skip(1);
+        }
+        merged.AddRange(rest);
+        return (merged, system);
     }
 
     public async Task<LlmResponse> CompleteAsync(
@@ -78,6 +128,7 @@ public class LlmService : ILlmService
     {
         var config = GetConfig(tier);
         var provider = GetOrCreateProvider(config);
+        var (fallbackMessages, fallbackSystemPrompt) = WithCachedPrefixInline(messages, systemPrompt, cachedContentName);
 
         var request = new LlmRequest(
             Model: config.Model,
@@ -132,7 +183,7 @@ public class LlmService : ILlmService
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
                 _logger.LogWarning("LLM circuit breaker is open for tier {Tier}, falling back to Backup", tier);
-                return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
             }
             catch (LlmContentBlockedException ex) when (tier != ModelTier.Backup)
             {
@@ -140,7 +191,7 @@ public class LlmService : ILlmService
                 // block. Jump straight to Backup (typically a different provider).
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "content_blocked").Inc();
                 _logger.LogWarning(ex, "LLM content blocked on tier {Tier}, skipping retries and falling back to Backup", tier);
-                return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -152,7 +203,7 @@ public class LlmService : ILlmService
 
                 // Timeout — no point retrying, go to backup
                 if (tier != ModelTier.Backup)
-                    return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, ct);
+                    return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
                 throw new TimeoutException($"LLM call timed out after {effectiveTimeoutSeconds}s (model: {config.Model})");
             }
             catch (Exception ex) when (attempt < retryDelays.Length)
@@ -176,7 +227,7 @@ public class LlmService : ILlmService
 
                 _logger.LogWarning(ex, "LLM call failed for tier {Tier} after {Attempts} attempts, falling back to Backup",
                     tier, retryDelays.Length + 1);
-                return await CompleteAsync(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, ct);
+                return await CompleteAsync(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, ct);
             }
         }
 
@@ -202,6 +253,7 @@ public class LlmService : ILlmService
             : baseSchema;
         var typeName = typeof(T).Name;
         var effectiveTimeoutSeconds = timeout?.TotalSeconds > 0 ? timeout.Value.TotalSeconds : config.TimeoutSeconds;
+        var (fallbackMessages, fallbackSystemPrompt) = WithCachedPrefixInline(messages, systemPrompt, cachedContentName);
 
         // Enhance system prompt with JSON instruction
         var enhancedSystemPrompt = systemPrompt ?? "";
@@ -291,7 +343,7 @@ public class LlmService : ILlmService
                     var backupTemperature = degenerate
                         ? Math.Max(0.5f, (temperature ?? config.Temperature) + 0.4f)
                         : temperature;
-                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, backupTemperature, maxTokens, timeout, propertyEnums, ct);
+                    return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, backupTemperature, maxTokens, timeout, propertyEnums, ct);
                 }
 
                 if (attempt > 0)
@@ -319,13 +371,13 @@ public class LlmService : ILlmService
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "circuit_open").Inc();
                 _logger.LogWarning("LLM circuit breaker is open for tier {Tier}<{Type}>, falling back to Backup", tier, typeName);
-                return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
             }
             catch (LlmContentBlockedException ex) when (tier != ModelTier.Backup)
             {
                 LlmMetrics.RequestsTotal.WithLabels(config.Model, tierName, config.Provider, "content_blocked").Inc();
                 _logger.LogWarning(ex, "LLM content blocked on tier {Tier}<{Type}>, skipping retries and falling back to Backup", tier, typeName);
-                return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -336,7 +388,7 @@ public class LlmService : ILlmService
                     effectiveTimeoutSeconds, tier, typeName, attempt + 1);
 
                 if (tier != ModelTier.Backup)
-                    return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                    return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
                 throw new TimeoutException($"LLM call timed out after {effectiveTimeoutSeconds}s (model: {config.Model})");
             }
             catch (Exception ex) when (attempt < retryDelays.Length)
@@ -358,7 +410,7 @@ public class LlmService : ILlmService
 
                 _logger.LogWarning(ex, "LLM call failed for tier {Tier}<{Type}> after {Attempts} attempts, falling back to Backup",
                     tier, typeName, retryDelays.Length + 1);
-                return await CompleteAsync<T>(ModelTier.Backup, messages, systemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
+                return await CompleteAsync<T>(ModelTier.Backup, fallbackMessages, fallbackSystemPrompt, temperature, maxTokens, timeout, propertyEnums, ct);
             }
         }
 

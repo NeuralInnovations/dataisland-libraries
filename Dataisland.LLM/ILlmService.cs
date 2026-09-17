@@ -15,8 +15,8 @@ public interface ILlmService
     /// <para>
     /// <paramref name="cachedContentName"/> references a provider context cache from
     /// <see cref="CreateContextCacheAsync"/>: its cached prefix (system instruction + shared
-    /// content) is billed at ~25% and MUST be omitted from <paramref name="messages"/>/
-    /// <paramref name="systemPrompt"/>. Only honoured on the primary tier — a Backup fallback
+    /// content) is billed at the provider/model-specific cache-read rate and MUST be omitted from
+    /// <paramref name="messages"/>/<paramref name="systemPrompt"/>. Only honoured on the primary tier — a Backup fallback
     /// runs a different model and drops the cache automatically.
     /// </para>
     Task<LlmResponse> CompleteAsync(ModelTier tier, IReadOnlyList<LlmMessage> messages,
@@ -63,17 +63,17 @@ public interface ILlmService
         CancellationToken ct = default);
 
     /// <summary>
-    /// Estimate the USD cost of a completed request given its model-name and token usage.
-    /// Returns 0 when the model is not configured in LlmOptions or its per-1K prices are 0.
-    /// Used by downstream spend-tracking (per-organisation cap enforcement, per-case cost
-    /// attribution) so callers don't need to re-implement the pricing lookup themselves.
+    /// Estimate the USD cost of a completed request using the effective-dated model registry.
+    /// The returned total is null when the model has no known tariff; callers must preserve that
+    /// uncertainty rather than treating it as zero or substituting another tier's tariff.
     ///
     /// reasoningTokens should be passed separately from completionTokens — on OpenAI o-series
     /// and gpt-5 models reasoning is billed as output but reported separately in usage, and on
     /// some providers it has its own pricing tier (see ModelConfig.ReasoningTokenCostPer1K).
     /// </summary>
-    decimal EstimateCostUsd(string model, int promptTokens, int completionTokens,
-        int cachedTokens = 0, int reasoningTokens = 0);
+    LlmCostEstimate EstimateCostUsd(string model, long promptTokens, long completionTokens,
+        long cachedTokens = 0, long reasoningTokens = 0, decimal cacheStorageTokenHours = 0m,
+        DateTimeOffset? at = null);
 }
 
 public enum ModelTier

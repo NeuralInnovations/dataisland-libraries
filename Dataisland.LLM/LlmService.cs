@@ -15,12 +15,14 @@ public class LlmService : ILlmService
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CachedPrefix> _cachePrefixes = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<LlmService> _logger;
+    private readonly LlmPricingRegistry _pricingRegistry;
 
     public LlmService(LlmOptions options, ILoggerFactory loggerFactory)
     {
         _options = options;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<LlmService>();
+        _pricingRegistry = new LlmPricingRegistry();
     }
 
     /// <summary>
@@ -501,7 +503,7 @@ public class LlmService : ILlmService
         return false;
     }
 
-    private static void RecordMetrics(ModelConfig config, string tier, LlmResponse response, TimeSpan elapsed)
+    private void RecordMetrics(ModelConfig config, string tier, LlmResponse response, TimeSpan elapsed)
     {
         var labels = new[] { response.Model, tier, config.Provider };
         var phase = LlmPhaseContext.Current;
@@ -516,28 +518,31 @@ public class LlmService : ILlmService
         LlmMetrics.RequestsTotal.WithLabels(response.Model, tier, config.Provider, "success").Inc();
         LlmMetrics.RequestDurationSeconds.WithLabels(labels).Observe(elapsed.TotalSeconds);
 
-        if (config.InputTokenCostPer1K > 0 || config.OutputTokenCostPer1K > 0 || config.ReasoningTokenCostPer1K > 0)
+        var estimate = _pricingRegistry.Estimate(
+            response.Model,
+            response.PromptTokens,
+            response.CompletionTokens,
+            response.CachedTokens,
+            response.ReasoningTokens);
+        if (estimate.TotalUsd is { } totalCost)
         {
-            // Cached input is ~25% of normal price on Gemini / ~50% on OpenAI; use 50% as a
-            // conservative blended factor for the "billable" input calculation. This keeps the
-            // tracked cost in the right ballpark without plumbing per-provider discount factors.
-            var billablePromptTokens = response.PromptTokens - (response.CachedTokens / 2);
-            // Reasoning tokens billed at the explicit ReasoningTokenCostPer1K when configured,
-            // otherwise fall back to the output rate (Gemini 2.5 Pro thoughts, OpenAI o-series/gpt-5).
-            var reasoningRate = config.ReasoningTokenCostPer1K > 0
-                ? config.ReasoningTokenCostPer1K
-                : config.OutputTokenCostPer1K;
-            var inputCost = (decimal)billablePromptTokens / 1000m * config.InputTokenCostPer1K;
-            var outputCost = (decimal)response.CompletionTokens / 1000m * config.OutputTokenCostPer1K;
-            var reasoningCost = (decimal)response.ReasoningTokens / 1000m * reasoningRate;
+            var inputCost = estimate.InputUsd.GetValueOrDefault() + estimate.CacheReadUsd.GetValueOrDefault();
+            var outputCost = estimate.OutputUsd.GetValueOrDefault();
+            var reasoningCost = estimate.ReasoningUsd.GetValueOrDefault();
 
             LlmMetrics.InputCostDollarsTotal.WithLabels(labels).Inc((double)inputCost);
             LlmMetrics.OutputCostDollarsTotal.WithLabels(labels).Inc((double)outputCost);
             if (reasoningCost > 0)
                 LlmMetrics.ReasoningCostDollarsTotal.WithLabels(labels).Inc((double)reasoningCost);
-            var totalCost = inputCost + outputCost + reasoningCost;
             LlmMetrics.CostDollarsTotal.WithLabels(labels).Inc((double)totalCost);
             LlmMetrics.PhaseCostDollarsTotal.WithLabels(phase, response.Model, tier).Inc((double)totalCost);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "No effective LLM tariff for model {Model}; cost metrics remain uncertain (status={Status})",
+                response.Model,
+                estimate.Price.Status);
         }
     }
 
@@ -551,44 +556,17 @@ public class LlmService : ILlmService
         _ => _options.Simple
     };
 
-    public decimal EstimateCostUsd(string model, int promptTokens, int completionTokens,
-        int cachedTokens = 0, int reasoningTokens = 0)
-    {
-        // Lookup is by exact model-name match so the same estimator works regardless of which
-        // tier the call was routed to (and across fallbacks between tiers). Match against every
-        // configured tier, take the first hit — if the same model is configured on multiple
-        // tiers, pricing is assumed identical.
-        var config = FindConfigByModel(model);
-        if (config is null) return 0m;
-
-        // Mirror of LlmService.RecordMetrics: cached input is billed at roughly half of normal
-        // on OpenAI (exact) and a quarter on Gemini (under-reports savings on Gemini). Using
-        // /2 as the blended approximation so cost-tracking remains consistent with metrics.
-        var billablePrompt = promptTokens - (cachedTokens / 2);
-        if (billablePrompt < 0) billablePrompt = 0;
-
-        // Reasoning tokens default to the output rate when no explicit reasoning rate is set —
-        // matches OpenAI's billing model for o-series and gpt-5 (reasoning priced as output).
-        var reasoningRate = config.ReasoningTokenCostPer1K > 0
-            ? config.ReasoningTokenCostPer1K
-            : config.OutputTokenCostPer1K;
-
-        return (decimal)billablePrompt / 1000m * config.InputTokenCostPer1K
-             + (decimal)completionTokens / 1000m * config.OutputTokenCostPer1K
-             + (decimal)reasoningTokens / 1000m * reasoningRate;
-    }
-
-    private ModelConfig? FindConfigByModel(string model)
-    {
-        var configs = new[] { _options.Simple, _options.Normal, _options.Advanced, _options.Backup, _options.Vision };
-        foreach (var c in configs)
-        {
-            if (c is not null && !string.IsNullOrEmpty(c.Model)
-                && string.Equals(c.Model, model, StringComparison.OrdinalIgnoreCase))
-                return c;
-        }
-        return null;
-    }
+    public LlmCostEstimate EstimateCostUsd(string model, long promptTokens, long completionTokens,
+        long cachedTokens = 0, long reasoningTokens = 0, decimal cacheStorageTokenHours = 0m,
+        DateTimeOffset? at = null) =>
+        _pricingRegistry.Estimate(
+            model,
+            promptTokens,
+            completionTokens,
+            cachedTokens,
+            reasoningTokens,
+            cacheStorageTokenHours,
+            at);
 
     private ILlmProvider GetOrCreateProvider(ModelConfig config)
     {

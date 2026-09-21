@@ -89,7 +89,11 @@ public sealed class LlmPricingRegistry
         new(new DateTimeOffset(2025, 6, 17, 0, 0, 0, TimeSpan.Zero), "gemini", "gemini-2.5-flash",
             0.30m, 2.50m, 0.03m, 1m),
         new(new DateTimeOffset(2025, 7, 22, 0, 0, 0, TimeSpan.Zero), "gemini", "gemini-2.5-flash-lite",
-            0.10m, 0.40m, 0.01m, 1m)
+            0.10m, 0.40m, 0.01m, 1m),
+
+        // TypeSafe System One (Jev 1.13) public token tariff. Output tokens are not billed.
+        new(new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero), "typesafe", "jev-1.13.0",
+            0.042m, 0m, 0m, 0m)
     ];
 
     public LlmPriceSnapshot GetSnapshot(string model, DateTimeOffset? at = null)

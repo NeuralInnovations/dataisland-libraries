@@ -12,8 +12,6 @@ public static class RequestLoggingApplicationBuilderExtensions
         this IApplicationBuilder app,
         IConfiguration configuration)
     {
-        app.UseMiddleware<SerilogMiddleware>();
-        
         var section = configuration.GetSection("Serilog:RequestLogging");
         var cfg = section.Get<RequestLoggingConfig>() ?? new RequestLoggingConfig();
 
@@ -69,14 +67,29 @@ public static class RequestLoggingApplicationBuilderExtensions
             options.EnrichDiagnosticContext = (diagCtx, httpContext) =>
             {
                 diagCtx.Set("ClientIP", httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-ip");
-                // Ensure StatusCode property exists for templates
-                diagCtx.Set("StatusCode", httpContext.Response?.StatusCode);
+                diagCtx.Set("StatusCode", httpContext.Response.StatusCode);
+                if (httpContext.Request.ContentType is { } requestContentType)
+                    diagCtx.Set("RequestContentType", requestContentType);
+                if (httpContext.Request.ContentLength is { } requestContentLength)
+                    diagCtx.Set("RequestContentLength", requestContentLength);
+                if (httpContext.Response.ContentType is { } responseContentType)
+                    diagCtx.Set("ResponseContentType", responseContentType);
+                if (httpContext.Response.ContentLength is { } responseContentLength)
+                    diagCtx.Set("ResponseContentLength", responseContentLength);
+                diagCtx.Set("RequestAborted", httpContext.RequestAborted.IsCancellationRequested);
                 if (httpContext.Items.TryGetValue("RequestBody", out var req) && req is string reqStr)
                     diagCtx.Set("RequestBody", reqStr);
                 if (httpContext.Items.TryGetValue("ResponseBody", out var resp) && resp is string respStr)
                     diagCtx.Set("ResponseBody", respStr);
+                if (httpContext.Items.ContainsKey("RequestBodyCaptureTruncated"))
+                    diagCtx.Set("RequestBodyCaptureTruncated", true);
+                if (httpContext.Items.ContainsKey("ResponseBodyCaptureTruncated"))
+                    diagCtx.Set("ResponseBodyCaptureTruncated", true);
             };
         });
+
+        if (cfg.BodyCapture.Enabled)
+            app.UseMiddleware<SerilogMiddleware>(cfg.BodyCapture);
 
         return app;
     }

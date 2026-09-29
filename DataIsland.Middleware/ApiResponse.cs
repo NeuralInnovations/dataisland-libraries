@@ -21,7 +21,7 @@ public static class ApiErrorResponses
         if (source is ApiErrorEnvelope envelope)
             return envelope;
         if (source is ApiResponse { Error: not null } response)
-            return new ApiErrorEnvelope(null, response.Error);
+            return new ApiErrorEnvelope(response.Data, response.Error);
 
         var error = source as ApiErrorResponse;
         var message = error?.Message ?? ReadStringProperty(source, "message");
@@ -47,7 +47,9 @@ public static class ApiErrorResponses
 
         var (defaultMessage, defaultCode) = Defaults(statusCode);
         return new ApiErrorEnvelope(
-            null,
+            // Keep controller payloads at their existing data path, including conflict IDs
+            // and ValidationProblemDetails.Errors. Plain errors have no structured data.
+            source is null or string or ApiErrorResponse ? null : source,
             new ApiErrorResponse(
                 string.IsNullOrWhiteSpace(message) ? defaultMessage : message,
                 string.IsNullOrWhiteSpace(code) ? defaultCode : code,

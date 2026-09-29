@@ -9,6 +9,10 @@ public interface IOrganizationRepository : IRepository
 {
     Task<Organization?> GetByIdAsync(string id);
     Task<List<Organization>> GetByIdsAsync(IEnumerable<string> ids);
+    Task<PaginatedResult<Organization>> GetByIdsPaginatedAsync(
+        IEnumerable<string> ids, PaginationQuery pagination, CancellationToken ct = default);
+    Task<(long Count, DateTime? ModifiedAt)> GetRevisionByIdsAsync(
+        IEnumerable<string> ids, CancellationToken ct = default);
     Task<Organization?> GetByMemberIdAsync(ObjectId userId);
     Task<List<Organization>> GetByMemberIdAllAsync(ObjectId userId);
     Task<PaginatedResult<Organization>> GetByMemberIdAllPaginatedAsync(ObjectId userId, PaginationQuery pagination);
@@ -34,6 +38,29 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
 
     public async Task<List<Organization>> GetByIdsAsync(IEnumerable<string> ids) =>
         await Secondary.Find(x => ids.Contains(x.Id) && !x.Metadata.IsDeleted).ToListAsync();
+
+    public async Task<PaginatedResult<Organization>> GetByIdsPaginatedAsync(
+        IEnumerable<string> ids, PaginationQuery pagination, CancellationToken ct = default)
+    {
+        var idList = ids.Distinct().ToList();
+        return await Secondary.Find(x => idList.Contains(x.Id) && !x.Metadata.IsDeleted)
+            .SortBy(x => x.Id)
+            .ToPaginatedAsync(pagination, ct);
+    }
+
+    public async Task<(long Count, DateTime? ModifiedAt)> GetRevisionByIdsAsync(
+        IEnumerable<string> ids, CancellationToken ct = default)
+    {
+        var idList = ids.Distinct().ToList();
+        var filter = Builders<Organization>.Filter.In(x => x.Id, idList)
+            & Builders<Organization>.Filter.Eq(x => x.Metadata.IsDeleted, false);
+        var count = await Secondary.CountDocumentsAsync(filter, cancellationToken: ct);
+        var modifiedAt = await Secondary.Find(filter)
+            .SortByDescending(x => x.ModifiedAt)
+            .Project(x => (DateTime?)x.ModifiedAt)
+            .FirstOrDefaultAsync(ct);
+        return (count, modifiedAt);
+    }
 
     public async Task<Organization?> GetByMemberIdAsync(ObjectId userId) =>
         await Collection.Find(x => x.MemberIds.Contains(userId) && !x.Metadata.IsDeleted).FirstOrDefaultAsync();

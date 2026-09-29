@@ -10,8 +10,13 @@ public interface IWorkspaceRepository : IRepository
     Task<Workspace?> GetByIdAsync(string id);
     Task<List<Workspace>> GetByIdsAsync(IEnumerable<string> ids);
     Task<List<Workspace>> GetByOrganizationIdAsync(ObjectId organizationId);
-    Task<PaginatedResult<Workspace>> GetByOrganizationIdPaginatedAsync(ObjectId organizationId, PaginationQuery pagination);
+    Task<PaginatedResult<Workspace>> GetByOrganizationIdPaginatedAsync(
+        ObjectId organizationId, PaginationQuery pagination, CancellationToken ct = default);
     Task<List<Workspace>> GetSharedByOrganizationIdAsync(ObjectId organizationId);
+    Task<PaginatedResult<Workspace>> GetSharedByOrganizationIdPaginatedAsync(
+        ObjectId organizationId, PaginationQuery pagination, CancellationToken ct = default);
+    Task<(long Count, DateTime? ModifiedAt)> GetRevisionByOrganizationIdAsync(
+        ObjectId organizationId, bool sharedOnly, CancellationToken ct = default);
     Task<List<Workspace>> GetSharedByOrganizationIdsAsync(IEnumerable<ObjectId> organizationIds);
     Task<List<Workspace>> GetAllWithProtocolSyncAsync();
     Task<Workspace> CreateAsync(Workspace workspace);
@@ -34,15 +39,41 @@ public class WorkspaceRepository : RepositoryWithIndex<Workspace>, IWorkspaceRep
         await Secondary.Find(x => x.Metadata.OrganizationId == organizationId && !x.Metadata.IsDeleted)
             .ToListAsync();
 
-    public async Task<PaginatedResult<Workspace>> GetByOrganizationIdPaginatedAsync(ObjectId organizationId, PaginationQuery pagination) =>
+    public async Task<PaginatedResult<Workspace>> GetByOrganizationIdPaginatedAsync(
+        ObjectId organizationId, PaginationQuery pagination, CancellationToken ct = default) =>
         await Secondary.Find(x => x.Metadata.OrganizationId == organizationId && !x.Metadata.IsDeleted)
-            .ToPaginatedAsync(pagination);
+            .SortBy(x => x.Id)
+            .ToPaginatedAsync(pagination, ct);
 
     public async Task<List<Workspace>> GetSharedByOrganizationIdAsync(ObjectId organizationId) =>
         await Secondary.Find(x => x.Metadata.OrganizationId == organizationId
                                    && x.Profile.IsShared
                                    && !x.Metadata.IsDeleted)
             .ToListAsync();
+
+    public async Task<PaginatedResult<Workspace>> GetSharedByOrganizationIdPaginatedAsync(
+        ObjectId organizationId, PaginationQuery pagination, CancellationToken ct = default) =>
+        await Secondary.Find(x => x.Metadata.OrganizationId == organizationId
+                                  && x.Profile.IsShared
+                                  && !x.Metadata.IsDeleted)
+            .SortBy(x => x.Id)
+            .ToPaginatedAsync(pagination, ct);
+
+    public async Task<(long Count, DateTime? ModifiedAt)> GetRevisionByOrganizationIdAsync(
+        ObjectId organizationId, bool sharedOnly, CancellationToken ct = default)
+    {
+        var filter = Builders<Workspace>.Filter.Eq(x => x.Metadata.OrganizationId, organizationId)
+            & Builders<Workspace>.Filter.Eq(x => x.Metadata.IsDeleted, false);
+        if (sharedOnly)
+            filter &= Builders<Workspace>.Filter.Eq(x => x.Profile.IsShared, true);
+
+        var count = await Secondary.CountDocumentsAsync(filter, cancellationToken: ct);
+        var modifiedAt = await Secondary.Find(filter)
+            .SortByDescending(x => x.ModifiedAt)
+            .Project(x => (DateTime?)x.ModifiedAt)
+            .FirstOrDefaultAsync(ct);
+        return (count, modifiedAt);
+    }
 
     public async Task<List<Workspace>> GetSharedByOrganizationIdsAsync(IEnumerable<ObjectId> organizationIds)
     {

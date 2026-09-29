@@ -180,7 +180,11 @@ public static class MongoDBRepositoryExtensions
         this IHealthChecksBuilder builder
     )
     {
-        builder.AddMongoDb(clientFactory: sp => sp.GetRequiredService<IMongoDBProvider>().Client);
+        // Tagged readiness like RabbitMQ and Elasticsearch: losing Mongo should take the pod out of
+        // the load balancer, not restart a process that would reconnect by itself.
+        builder.AddMongoDb(
+            clientFactory: sp => sp.GetRequiredService<IMongoDBProvider>().Client,
+            tags: ["readiness"]);
         return builder;
     }
 

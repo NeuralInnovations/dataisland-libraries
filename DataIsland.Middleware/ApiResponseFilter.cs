@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 
 namespace DataIsland.Middleware;
 
@@ -20,6 +22,20 @@ public class ApiResponseFilter : IAsyncResultFilter
             return;
         }
 
+        var statusCode = (context.Result as IStatusCodeActionResult)?.StatusCode
+                         ?? context.HttpContext.Response.StatusCode;
+        if (statusCode >= StatusCodes.Status400BadRequest)
+        {
+            var source = (context.Result as ObjectResult)?.Value;
+            context.Result = new ObjectResult(
+                ApiErrorResponses.Create(context.HttpContext, statusCode, source))
+            {
+                StatusCode = statusCode
+            };
+            await next();
+            return;
+        }
+
         if (context.Result is ObjectResult { Value: not null } result)
         {
             var value = result.Value;
@@ -33,20 +49,14 @@ public class ApiResponseFilter : IAsyncResultFilter
                 var total = (long)type.GetProperty("Total")!.GetValue(value)!;
                 var totalPages = (int)type.GetProperty("TotalPages")!.GetValue(value)!;
 
-                result.Value = new
-                {
-                    Data = items,
-                    Error = (ApiErrorResponse?)null,
-                    Pagination = new PaginationMeta(page, pageSize, total, totalPages)
-                };
+                result.Value = new PaginatedApiResponse(
+                    items,
+                    null,
+                    new PaginationMeta(page, pageSize, total, totalPages));
             }
             else
             {
-                result.Value = new
-                {
-                    Data = value,
-                    Error = (ApiErrorResponse?)null
-                };
+                result.Value = new ApiResponse(value, null);
             }
         }
 

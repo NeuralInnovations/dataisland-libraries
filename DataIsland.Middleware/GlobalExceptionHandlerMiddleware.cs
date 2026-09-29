@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Dataisland.Exceptions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -14,20 +13,41 @@ public class GlobalExceptionHandlerMiddleware(
         try
         {
             await next(context);
+
+            if (context.Response.StatusCode >= StatusCodes.Status400BadRequest
+                && !HasResponseBody(context.Response))
+            {
+                await ApiErrorResponses.WriteAsync(
+                    context,
+                    context.Response.StatusCode,
+                    cancellationToken: context.RequestAborted);
+            }
         }
         catch (ApiException ex)
         {
             logger.LogWarning(ex, "API error {ErrorCode}: {Message}", ex.ErrorCode, ex.Message);
-            await WriteErrorResponse(context, ex.StatusCode, ex.Message, ex.ErrorCode);
+            await ApiErrorResponses.WriteAsync(
+                context,
+                ex.StatusCode,
+                new ApiErrorResponse(ex.Message, ex.ErrorCode),
+                context.RequestAborted);
         }
         catch (UnauthorizedAccessException)
         {
-            await WriteErrorResponse(context, 401, "Unauthorized", "UNAUTHORIZED");
+            await ApiErrorResponses.WriteAsync(
+                context,
+                StatusCodes.Status401Unauthorized,
+                new ApiErrorResponse("Unauthorized", "UNAUTHORIZED"),
+                context.RequestAborted);
         }
         catch (FormatException ex)
         {
             logger.LogWarning(ex, "Invalid format: {Message}", ex.Message);
-            await WriteErrorResponse(context, 400, "Invalid request format", "INVALID_FORMAT");
+            await ApiErrorResponses.WriteAsync(
+                context,
+                StatusCodes.Status400BadRequest,
+                new ApiErrorResponse("Invalid request format", "INVALID_FORMAT"),
+                context.RequestAborted);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
@@ -37,24 +57,18 @@ public class GlobalExceptionHandlerMiddleware(
         {
             logger.LogError(ex, "Unhandled exception on {Method} {Path}",
                 context.Request.Method, context.Request.Path);
-            await WriteErrorResponse(context, 500, "An unexpected error occurred", "INTERNAL_ERROR");
+            await ApiErrorResponses.WriteAsync(
+                context,
+                StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse("An unexpected error occurred", "INTERNAL_ERROR"),
+                context.RequestAborted);
         }
     }
 
-    private static async Task WriteErrorResponse(
-        HttpContext context, int statusCode, string message, string code)
+    private static bool HasResponseBody(HttpResponse response)
     {
-        if (context.Response.HasStarted) return;
-
-        context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "application/json; charset=utf-8";
-
-        var traceId = Activity.Current?.Id ?? context.TraceIdentifier;
-        var response = new
-        {
-            Data = (object?)null,
-            Error = new ApiErrorResponse(message, code, traceId)
-        };
-        await context.Response.WriteAsJsonAsync(response);
+        if (response.HasStarted || response.ContentLength is > 0)
+            return true;
+        return response.Body.CanSeek && response.Body.Length > 0;
     }
 }

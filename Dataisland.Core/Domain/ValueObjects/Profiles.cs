@@ -70,6 +70,9 @@ public class OrganizationProfile : DescriptionProfile
     [BsonElement("integrations")]
     public OrganizationIntegrations Integrations { get; set; } = new();
 
+    [BsonElement("patientAssistant")]
+    public OrganizationPatientAssistantSettings PatientAssistant { get; set; } = new();
+
     /// <summary>
     /// Approximate per-category clinic prices (admin-configured) used by the business-impact
     /// dashboard to estimate potential revenue lost when a doctor omits a mandatory prescription,
@@ -194,6 +197,23 @@ public class TrialDataProcessingConsent
 
     [BsonElement("acceptedByUserId")]
     public ObjectId AcceptedByUserId { get; set; }
+}
+
+/// <summary>
+/// Patient-assistant enablement and clinic-approved sensitive policy, scoped to an organisation.
+/// </summary>
+[BsonIgnoreExtraElements]
+public class OrganizationPatientAssistantSettings
+{
+    [BsonElement("journeyEnabled")]
+    public bool JourneyEnabled { get; set; }
+
+    // Null means the clinic has not approved its policy yet. Empty lists are an explicit policy.
+    [BsonElement("sensitiveWordStems")]
+    public List<string>? SensitiveWordStems { get; set; }
+
+    [BsonElement("sensitiveAbbreviations")]
+    public List<string>? SensitiveAbbreviations { get; set; }
 }
 
 /// <summary>

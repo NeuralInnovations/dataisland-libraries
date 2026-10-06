@@ -217,6 +217,10 @@ public class OrganizationPatientAssistantSettings
 
     [BsonElement("operatorRequiredServices")]
     public List<PatientAssistantOperatorServiceRule>? OperatorRequiredServices { get; set; }
+
+    // Missing values retain the messenger default in MedicalFlow.
+    [BsonElement("messageMaxCharacters")]
+    public int? MessageMaxCharacters { get; set; }
 }
 
 [BsonIgnoreExtraElements]

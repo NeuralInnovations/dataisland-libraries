@@ -221,6 +221,13 @@ public class OrganizationPatientAssistantSettings
     // Missing values retain the messenger default in MedicalFlow.
     [BsonElement("messageMaxCharacters")]
     public int? MessageMaxCharacters { get; set; }
+
+    // Null means the clinic has not configured its trigger delays; no defaults are inferred.
+    [BsonElement("noRepeatVisitDelayDays")]
+    public int? NoRepeatVisitDelayDays { get; set; }
+
+    [BsonElement("chronicFollowUpDelayMonths")]
+    public int? ChronicFollowUpDelayMonths { get; set; }
 }
 
 [BsonIgnoreExtraElements]

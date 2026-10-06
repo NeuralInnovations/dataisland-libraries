@@ -200,7 +200,7 @@ public class TrialDataProcessingConsent
 }
 
 /// <summary>
-/// Patient-assistant enablement and clinic-approved sensitive policy, scoped to an organisation.
+/// Patient-assistant enablement and clinic-approved policies, scoped to an organisation.
 /// </summary>
 [BsonIgnoreExtraElements]
 public class OrganizationPatientAssistantSettings
@@ -214,6 +214,19 @@ public class OrganizationPatientAssistantSettings
 
     [BsonElement("sensitiveAbbreviations")]
     public List<string>? SensitiveAbbreviations { get; set; }
+
+    [BsonElement("operatorRequiredServices")]
+    public List<PatientAssistantOperatorServiceRule>? OperatorRequiredServices { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public class PatientAssistantOperatorServiceRule
+{
+    [BsonElement("service")]
+    public string Service { get; set; } = string.Empty;
+
+    [BsonElement("requiresSedation")]
+    public bool RequiresSedation { get; set; }
 }
 
 /// <summary>

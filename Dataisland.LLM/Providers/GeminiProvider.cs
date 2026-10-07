@@ -192,7 +192,11 @@ public class GeminiProvider : ILlmProvider
         };
 
         if (request.MaxTokens.HasValue)
-            config.MaxOutputTokens = request.MaxTokens.Value;
+            // Gemini counts thoughts against maxOutputTokens too. Preserve the caller's response
+            // allowance when an explicit bounded thinking budget is enabled; otherwise a small
+            // structured response cap can be spent entirely on reasoning and return only "{\"".
+            // Dynamic thinking (-1) has no known reserve; leave that explicit total cap unchanged.
+            config.MaxOutputTokens = checked(request.MaxTokens.Value + Math.Max(0, thinkingBudget));
 
         // A context cache already carries the system instruction + shared prefix; Gemini rejects
         // a per-request SystemInstruction alongside a cache, so the two are mutually exclusive.

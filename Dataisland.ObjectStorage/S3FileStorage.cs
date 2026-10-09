@@ -59,31 +59,36 @@ public class S3FileStorage : IFileStorage, IAsyncDisposable
     {
         await EnsureBucketAsync(bucket, ct);
 
-        // Always buffer to MemoryStream for reliable upload:
-        // 1. Guarantees Content-Length is set (no chunked transfer)
-        // 2. UseChunkEncoding=false prevents AWS SDK chunked payload signing
-        //    which SeaweedFS stores as chunk manifests instead of actual content
-        MemoryStream ms;
-        if (content is MemoryStream existing && existing.Position == 0)
+        // Seekable streams already provide Content-Length and support SDK retries.
+        // Keep chunk encoding disabled for SeaweedFS, without copying FileStream to RAM.
+        MemoryStream? buffer = null;
+        try
         {
-            ms = existing;
+            var upload = content;
+            if (!content.CanSeek)
+            {
+                buffer = new MemoryStream();
+                await content.CopyToAsync(buffer, ct);
+                buffer.Position = 0;
+                upload = buffer;
+            }
+            await _client.PutObjectAsync(new PutObjectRequest
+            {
+                BucketName = bucket,
+                Key = path,
+                InputStream = upload,
+                ContentType = contentType,
+                UseChunkEncoding = false,
+                AutoCloseStream = false,
+                AutoResetStreamPosition = false,
+                Headers = { ContentLength = upload.Length - upload.Position }
+            }, ct);
         }
-        else
+        finally
         {
-            ms = new MemoryStream();
-            await content.CopyToAsync(ms, ct);
-            ms.Position = 0;
+            if (buffer is not null)
+                await buffer.DisposeAsync();
         }
-
-        await _client.PutObjectAsync(new PutObjectRequest
-        {
-            BucketName = bucket,
-            Key = path,
-            InputStream = ms,
-            ContentType = contentType,
-            UseChunkEncoding = false,
-            Headers = { ContentLength = ms.Length }
-        }, ct);
     }
 
     public async Task<int> CopyPrefixAsync(string bucket, string sourcePrefix, string targetPrefix, CancellationToken ct = default)

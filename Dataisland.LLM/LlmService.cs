@@ -35,6 +35,9 @@ public class LlmService : ILlmService
         return _circuitBreakers.GetOrAdd(key, _ => new ResiliencePipelineBuilder()
             .AddCircuitBreaker(new CircuitBreakerStrategyOptions
             {
+                // Content refusals depend on the request, not provider availability.
+                ShouldHandle = args => ValueTask.FromResult(args.Outcome.Exception is not null
+                    and not OperationCanceledException and not LlmContentBlockedException),
                 FailureRatio = 0.5,
                 SamplingDuration = TimeSpan.FromSeconds(30),
                 MinimumThroughput = 5,

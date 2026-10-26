@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Core.Bulk;
@@ -13,17 +14,25 @@ public class ElasticClientImpl : IElasticClient
 {
     private readonly ElasticsearchClient _client;
     private readonly ILogger<ElasticClientImpl> _logger;
+    // Elasticsearch:StableSearchPreference (dialog 38): scoring searches name their shard copies by a hash of
+    // the request, so the same request is scored by the same BM25 statistics every time.
+    private readonly bool _stablePreference;
     private static readonly TimeSpan FileTypeUpdateRequestTimeout = TimeSpan.FromMinutes(5);
 
-    internal ElasticClientImpl(ElasticsearchClient client, ILogger<ElasticClientImpl> logger)
+    internal ElasticClientImpl(ElasticsearchClient client, ILogger<ElasticClientImpl> logger, bool stablePreference = false)
     {
         _client = client;
         _logger = logger;
+        _stablePreference = stablePreference;
     }
 
     public ElasticClientImpl(ElasticsearchOptions options, ILogger<ElasticClientImpl> logger)
     {
         _logger = logger;
+        _stablePreference = options.StableSearchPreference;
+        if (_stablePreference)
+            logger.LogInformation(
+                "Elasticsearch stable search preference is on: the same search is answered by the same shard copies");
 
         var uri = new Uri(options.Url);
         var settings = new ElasticsearchClientSettings(uri)
@@ -413,8 +422,11 @@ public class ElasticClientImpl : IElasticClient
         string[] indices, float[] queryVector, int k, string? fileIdFilter = null, int[]? fileTypeFilters = null, CancellationToken ct = default)
     {
         var filters = BuildSearchFilters<T>(fileIdFilter, fileTypeFilters);
+        var preference = PreferenceFor("knn", indices,
+            [StableSearchPreference.VectorPart(queryVector), k.ToString(CultureInfo.InvariantCulture),
+             fileIdFilter, StableSearchPreference.FileTypesPart(fileTypeFilters)]);
         var response = await _client.SearchAsync<T>(s =>
-            s.Index(string.Join(",", indices))
+            WithPreference(s, preference).Index(string.Join(",", indices))
                 .Size(k)
                 .Knn(knn =>
                 {
@@ -481,7 +493,10 @@ public class ElasticClientImpl : IElasticClient
         var icdRoots = icdCodes.Select(c => c.Contains('.') ? c.Split('.')[0] : c).Distinct().ToArray();
 
         var filters = BuildSearchFilters<T>(null, fileTypeFilters);
-        var response = await _client.SearchAsync<T>(s => s
+        // Dialog 38: the scores of this search are what Phase C reads; the same request must get the same ones.
+        var preference = PreferenceFor("metadata", indices,
+            normalizedQueries.Prepend(StableSearchPreference.FileTypesPart(fileTypeFilters)));
+        var response = await _client.SearchAsync<T>(s => WithPreference(s, preference)
             .Index(string.Join(",", indices))
             // A library whose index does not exist yet holds nothing; it must not blank out the
             // libraries that do exist in the same request (index_not_found fails the whole search).
@@ -600,6 +615,12 @@ public class ElasticClientImpl : IElasticClient
         }
     }
 
+    private string? PreferenceFor(string kind, string[] indices, IEnumerable<string?> parts) =>
+        _stablePreference ? StableSearchPreference.For(kind, indices, parts) : null;
+
+    private static SearchRequestDescriptor<T> WithPreference<T>(SearchRequestDescriptor<T> search, string? preference) =>
+        preference is null ? search : search.Preference(preference);
+
     private static Action<QueryDescriptor<T>>[] BuildSearchFilters<T>(string? fileIdFilter, int[]? fileTypeFilters)
     {
         var filters = new List<Action<QueryDescriptor<T>>>();
@@ -685,7 +706,11 @@ public class ElasticClientImpl : IElasticClient
         if (should.Count == 0)
             return [];
 
-        var response = await _client.SearchAsync<T>(s => s
+        var preference = PreferenceFor("file-keywords", indices,
+            new[] { fileId, Math.Max(1, size).ToString(CultureInfo.InvariantCulture) }
+                .Concat(query.Phrases.Select(p => $"{p.Text?.Trim()}^{p.Boost.ToString("R", CultureInfo.InvariantCulture)}"))
+                .Concat(query.Prefixes.Select(p => "prefix:" + p?.Trim().ToLowerInvariant())));
+        var response = await _client.SearchAsync<T>(s => WithPreference(s, preference)
             .Index(string.Join(",", indices))
             .Size(Math.Max(1, size))
             .Query(q => q

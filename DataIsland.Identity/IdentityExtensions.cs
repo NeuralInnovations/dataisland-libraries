@@ -7,11 +7,18 @@ namespace DataIsland.Identity;
 
 public static class IdentityExtensions
 {
+    /// <param name="debugAuth">
+    /// The debug-auth decision, when the caller has already made it — a host knows its environment
+    /// name better than this method can guess it, and the policies that list the scheme must be
+    /// built from the SAME decision that registers it. Null evaluates it here.
+    /// </param>
     public static IServiceCollection AddDataIslandIdentity(
-        this IServiceCollection services, IConfiguration configuration)
+        this IServiceCollection services,
+        IConfiguration configuration,
+        DebugAuthDecision? debugAuth = null)
     {
-        var isDebugAuth = configuration.GetValue<bool>("Auth:Debug");
-        var debugSecret = configuration["DataIslandAuth:DebugSecret"];
+        debugAuth ??= DebugAuthGate.Evaluate(configuration);
+        services.AddSingleton(debugAuth);
 
         var authBuilder = services.AddAuthentication(options =>
         {
@@ -39,23 +46,10 @@ public static class IdentityExtensions
             options.TokenValidationParameters.ValidateLifetime = true;
         });
 
-        var environment = configuration["ASPNETCORE_ENVIRONMENT"]
-                         ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-                         ?? "Production";
-        var isDevelopment = string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase);
-
-        if (isDebugAuth && !isDevelopment)
-        {
-            // Silently ignore debug auth in non-Development environments
-            isDebugAuth = false;
-        }
-
-        if (isDebugAuth && !string.IsNullOrEmpty(debugSecret))
+        if (debugAuth.Enabled)
         {
             authBuilder.AddScheme<AuthenticationSchemeOptions, DebugAuthHandler>(
                 DebugAuthHandler.SchemeName, _ => { });
-
-            services.AddSingleton(new DebugAuthSecret(debugSecret));
 
             services.AddAuthorization(options =>
             {
@@ -80,4 +74,3 @@ public static class IdentityExtensions
     }
 }
 
-public record DebugAuthSecret(string Secret);

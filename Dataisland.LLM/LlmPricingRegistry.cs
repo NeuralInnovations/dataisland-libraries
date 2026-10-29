@@ -91,6 +91,14 @@ public sealed class LlmPricingRegistry
         new(new DateTimeOffset(2025, 7, 22, 0, 0, 0, TimeSpan.Zero), "gemini", "gemini-2.5-flash-lite",
             0.10m, 0.40m, 0.01m, 1m),
 
+        // Gemini 3.8 Flash standard paid tier; output includes thinking tokens. Google publishes no
+        // release date, so the first row starts before our first call (dev, 2026-10-13). Without a row
+        // the Advanced tier showed $0 in llm_cost_dollars_total while Google billed it.
+        new(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), "gemini", "gemini-3.8-flash",
+            0.75m, 3.75m, 0.075m, 0.50m),
+        new(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero), "gemini", "gemini-3.8-flash",
+            1.50m, 7.50m, 0.15m, 1m),
+
         // TypeSafe System One (Jev 1.13) public token tariff. Output tokens are not billed.
         new(new DateTimeOffset(2026, 9, 21, 0, 0, 0, TimeSpan.Zero), "typesafe", "jev-1.13.0",
             0.042m, 0m, 0m, 0m)

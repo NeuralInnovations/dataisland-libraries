@@ -1,3 +1,4 @@
+using Dataisland.Contracts.Shared;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -133,7 +134,7 @@ public class OrganizationProfile : DescriptionProfile
 /// Per-organisation quality-score thresholds (scores are on a 0–5 scale). Two org-wide levels drive
 /// three alarm bands with no extra frontend logic: at/above <see cref="Overall"/> = ok; between
 /// <see cref="Critical"/> and Overall = warning; below Critical = critical. <see cref="ByAspect"/>
-/// holds optional per-scale overrides (keys: medication | examination | lifestyle | …) and
+/// holds optional per-scale overrides (keys: medications | examinations | lifestyle | …) and
 /// <see cref="ByDepartment"/> optional per-department overrides. <see cref="Configured"/> is false
 /// until an admin saves thresholds — the values are still the server defaults so screens never show 0.
 /// </summary>
@@ -152,13 +153,101 @@ public class QualityThresholds
     [BsonElement("byAspect")]
     public Dictionary<string, double> ByAspect { get; set; } = new()
     {
-        ["medication"] = 3.5,
-        ["examination"] = 3.0,
+        [RecommendationCategoryWeights.Medications] = 3.5,
+        [RecommendationCategoryWeights.Examinations] = 3.0,
         ["lifestyle"] = 2.0
     };
 
     [BsonElement("byDepartment")]
     public List<DepartmentThreshold> ByDepartment { get; set; } = [];
+
+    [BsonElement("categoryWeights")]
+    [BsonIgnoreIfNull]
+    public Dictionary<string, int>? CategoryWeights { get; set; }
+}
+
+public static class RecommendationCategoryWeights
+{
+    public const string Medications = "medications";
+    public const string Examinations = "examinations";
+    public const string Lifestyle = "lifestyle";
+
+    public static IReadOnlyList<string> MedicationNames { get; } =
+        Array.AsReadOnly(new[] { "Medications", "Лікування та медикаменти" });
+    public static IReadOnlyList<string> ExaminationNames { get; } =
+        Array.AsReadOnly(new[] { "Examinations", "Додаткові обстеження" });
+    public static IReadOnlyList<string> LifestyleNames { get; } =
+        Array.AsReadOnly(new[] { "Lifestyle", "Рекомендації щодо способу життя", "Рекомендації що до способу життя" });
+
+    public static bool IsValid(IReadOnlyDictionary<string, int> weights) =>
+        weights.Count == 3 &&
+        weights.TryGetValue(Medications, out var medications) && medications >= 10 &&
+        weights.TryGetValue(Examinations, out var examinations) && examinations >= 10 &&
+        weights.TryGetValue(Lifestyle, out var lifestyle) && lifestyle >= 10 &&
+        (long)medications + examinations + lifestyle == 100;
+
+    public static double? Calculate(
+        IReadOnlyDictionary<string, int> weights, double? medications, double? examinations, double? lifestyle)
+    {
+        var numerator = 0d;
+        var denominator = 0;
+        Add(Medications, medications);
+        Add(Examinations, examinations);
+        Add(Lifestyle, lifestyle);
+        return denominator > 0 ? numerator / denominator : null;
+
+        void Add(string category, double? score)
+        {
+            if (score is null) return;
+            var weight = weights[category];
+            numerator += weight * score.Value;
+            denominator += weight;
+        }
+    }
+
+    public static int? CalculateCase(IReadOnlyDictionary<string, int> weights, RecommendationQualityResult? quality)
+    {
+        if (quality is not { NotAssessable: false, Categories.Count: > 0 }) return null;
+
+        double? Average(IReadOnlyList<string> names) => quality.Categories
+            .Where(category => names.Contains(category.Category))
+            .Average(category => (double?)category.Score);
+
+        var score = Calculate(weights, Average(MedicationNames), Average(ExaminationNames), Average(LifestyleNames));
+        return score is { } value ? (int)Math.Round(value, MidpointRounding.AwayFromZero) : null;
+    }
+}
+
+public readonly record struct RecommendationCategoryTotals(
+    double MedicationSum, long MedicationCount,
+    double ExaminationSum, long ExaminationCount,
+    double LifestyleSum, long LifestyleCount)
+{
+    public static RecommendationCategoryTotals? FromAnalytics(MedicalAnalyticsResultDto result)
+    {
+        if (result.MetricAccumulators is
+            { Medications: { } medications, Examinations: { } examinations, Lifestyle: { } lifestyle })
+            return new(medications.Numerator, medications.Denominator,
+                examinations.Numerator, examinations.Denominator,
+                lifestyle.Numerator, lifestyle.Denominator);
+
+        if (result.ScoringCoverage is not { } coverage) return null;
+        return new(
+            (double)result.MedicationsAverage * coverage.MedicationsScored, coverage.MedicationsScored,
+            (double)result.ExaminationsAverage * coverage.ExaminationsScored, coverage.ExaminationsScored,
+            (double)result.LifestyleAverage * coverage.LifestyleScored, coverage.LifestyleScored);
+    }
+
+    public RecommendationCategoryTotals Add(RecommendationCategoryTotals other) =>
+        new(MedicationSum + other.MedicationSum, MedicationCount + other.MedicationCount,
+            ExaminationSum + other.ExaminationSum, ExaminationCount + other.ExaminationCount,
+            LifestyleSum + other.LifestyleSum, LifestyleCount + other.LifestyleCount);
+
+    public double? WeightedAverage(IReadOnlyDictionary<string, int> weights) =>
+        RecommendationCategoryWeights.Calculate(weights,
+            MedicationCount > 0 ? MedicationSum / MedicationCount : null,
+            ExaminationCount > 0 ? ExaminationSum / ExaminationCount : null,
+            LifestyleCount > 0 ? LifestyleSum / LifestyleCount : null);
 }
 
 /// <summary>One department's threshold override. <see cref="Configured"/> distinguishes an explicit

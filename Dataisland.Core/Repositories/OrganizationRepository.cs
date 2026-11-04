@@ -1,4 +1,5 @@
 using Dataisland.Core.Domain.Entities;
+using Dataisland.Core.Domain.ValueObjects;
 using Dataisland.MongoDB;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -18,6 +19,10 @@ public interface IOrganizationRepository : IRepository
     Task<PaginatedResult<Organization>> GetByMemberIdAllPaginatedAsync(ObjectId userId, PaginationQuery pagination);
     Task<Organization> CreateAsync(Organization org);
     Task UpdateAsync(Organization org);
+    Task<Organization?> UpdateQualityThresholdsAsync(
+        string id, double? overall, double? critical, Dictionary<string, double>? byAspect,
+        List<DepartmentThreshold>? byDepartment, Dictionary<string, int>? categoryWeights,
+        bool resetCategoryWeights, CancellationToken ct = default);
     Task SoftDeleteAsync(string id);
     Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId);
     /// <summary>
@@ -81,6 +86,51 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
     {
         org.ModifiedAt = DateTime.UtcNow;
         await Collection.ReplaceOneAsync(x => x.Id == org.Id, org);
+    }
+
+    public async Task<Organization?> UpdateQualityThresholdsAsync(
+        string id, double? overall, double? critical, Dictionary<string, double>? byAspect,
+        List<DepartmentThreshold>? byDepartment, Dictionary<string, int>? categoryWeights,
+        bool resetCategoryWeights, CancellationToken ct = default)
+    {
+        const string path = "profile.qualityThresholds";
+        var settings = new QualityThresholds
+        {
+            Configured = true,
+            ByAspect = byAspect ?? [],
+            ByDepartment = byDepartment ?? [],
+            CategoryWeights = categoryWeights
+        };
+        if (overall.HasValue) settings.Overall = overall.Value;
+        if (critical.HasValue) settings.Critical = critical.Value;
+
+        var changes = settings.ToBsonDocument();
+        if (!overall.HasValue) changes.Remove("overall");
+        if (!critical.HasValue) changes.Remove("critical");
+        if (byAspect is null) changes.Remove("byAspect");
+        if (byDepartment is null) changes.Remove("byDepartment");
+
+        // Merge only explicitly supplied fields, including when a legacy document has no
+        // thresholds object. Treat submitted dictionaries as literal data in the pipeline.
+        var stages = new List<BsonDocument>
+        {
+            new("$set", new BsonDocument
+            {
+                { path, new BsonDocument("$mergeObjects", new BsonArray
+                    {
+                        "$" + path,
+                        new BsonDocument("$literal", changes)
+                    }) },
+                { "_modified", new BsonDateTime(DateTime.UtcNow) }
+            })
+        };
+        if (resetCategoryWeights)
+            stages.Add(new BsonDocument("$unset", path + ".categoryWeights"));
+
+        var update = Builders<Organization>.Update.Pipeline(PipelineDefinition<Organization, Organization>.Create(stages));
+        return await Collection.FindOneAndUpdateAsync(
+            x => x.Id == id && !x.Metadata.IsDeleted, update,
+            new FindOneAndUpdateOptions<Organization> { ReturnDocument = ReturnDocument.After }, ct);
     }
 
     public async Task<Organization?> GetIfMemberAsync(string orgId, ObjectId memberUserId)

@@ -85,7 +85,26 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
     public async Task UpdateAsync(Organization org)
     {
         org.ModifiedAt = DateTime.UtcNow;
-        await Collection.ReplaceOneAsync(x => x.Id == org.Id, org);
+        var replacement = org.ToBsonDocument();
+        var profile = replacement.GetValue("profile", BsonNull.Value) as BsonDocument ?? new BsonDocument();
+        profile.Remove("qualityThresholds");
+        replacement.Remove("profile");
+
+        // Quality thresholds have a dedicated update path. Preserve the current database value
+        // when another settings screen saves an organization it read before that update.
+        var replacementProfile = new BsonDocument("$mergeObjects", new BsonArray
+        {
+            new BsonDocument("$literal", profile),
+            new BsonDocument("qualityThresholds", "$profile.qualityThresholds")
+        });
+        var stage = new BsonDocument("$replaceWith", new BsonDocument("$mergeObjects", new BsonArray
+        {
+            new BsonDocument("$literal", replacement),
+            new BsonDocument("profile", replacementProfile)
+        }));
+        var update = Builders<Organization>.Update.Pipeline(
+            PipelineDefinition<Organization, Organization>.Create(new[] { stage }));
+        await Collection.UpdateOneAsync(x => x.Id == org.Id, update);
     }
 
     public async Task<Organization?> UpdateQualityThresholdsAsync(
@@ -109,6 +128,9 @@ public class OrganizationRepository : RepositoryWithIndex<Organization>, IOrgani
         if (!critical.HasValue) changes.Remove("critical");
         if (byAspect is null) changes.Remove("byAspect");
         if (byDepartment is null) changes.Remove("byDepartment");
+        if ((categoryWeights is not null || resetCategoryWeights) &&
+            !overall.HasValue && !critical.HasValue && byAspect is null && byDepartment is null)
+            changes.Remove("configured");
 
         // Merge only explicitly supplied fields, including when a legacy document has no
         // thresholds object. Treat submitted dictionaries as literal data in the pipeline.

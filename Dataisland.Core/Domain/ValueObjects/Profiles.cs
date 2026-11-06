@@ -4,12 +4,14 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace Dataisland.Core.Domain.ValueObjects;
 
+[BsonIgnoreExtraElements]
 public class BasicProfile
 {
     [BsonElement("name")]
     public string Name { get; set; } = string.Empty;
 }
 
+[BsonIgnoreExtraElements]
 public class DescriptionProfile : BasicProfile
 {
     [BsonElement("description")]
@@ -213,11 +215,25 @@ public static class RecommendationCategoryWeights
             .Where(category => names.Contains(category.Category))
             .Average(category => (double?)category.Score);
 
-        var score = Calculate(weights, Average(MedicationNames), Average(ExaminationNames), Average(LifestyleNames));
-        return score is { } value ? (int)Math.Round(value, MidpointRounding.AwayFromZero) : null;
+        var medications = Average(MedicationNames);
+        var examinations = Average(ExaminationNames);
+        var lifestyle = Average(LifestyleNames);
+        if (Calculate(weights, medications, examinations, lifestyle) is not { } weighted) return null;
+        var plain = new[] { medications, examinations, lifestyle }.Where(score => score.HasValue).Average(score => score!.Value);
+
+        // The free-form audit stores the rounded plain mean of the categories, so the weights reweigh the
+        // categories themselves. j2c stores a score over all findings at once (J2cRules.Overall): Л5 О3 С5 is
+        // stored 3, and recomputing it from the categories showed 4 in the critical list. Such a score is
+        // shifted by as much as the weights shift the category mean, so a near-equal split leaves it as stored.
+        // BuildWeightedReviewQueueScore must compute the same number for the queue's sort and filter.
+        var score = Round(plain) == quality.OverallScore ? weighted : quality.OverallScore + (weighted - plain);
+        return Round(Math.Clamp(score, 0, 5));
+
+        static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
     }
 }
 
+[BsonIgnoreExtraElements]
 public readonly record struct RecommendationCategoryTotals(
     double MedicationSum, long MedicationCount,
     double ExaminationSum, long ExaminationCount,

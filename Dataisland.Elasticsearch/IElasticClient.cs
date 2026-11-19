@@ -22,6 +22,14 @@ public interface IElasticClient
     Task<long> UpdateFileTypeByFileIdsAsync(string indexName, IReadOnlyCollection<string> fileIds, int fileType, CancellationToken ct = default);
 
     /// <summary>
+    /// Sets the type of every chunk of one file: <c>file_type</c> to <paramref name="fileType"/>, and
+    /// <c>file_types</c> to <paramref name="fileTypes"/> when the file has more than one type, removed
+    /// otherwise. Returns the number of chunks updated.
+    /// </summary>
+    Task<long> UpdateFileTypesByFileIdAsync(string indexName, string fileId, int fileType,
+        IReadOnlyCollection<int>? fileTypes, CancellationToken ct = default);
+
+    /// <summary>
     /// Writes regenerated metadata (ICD codes, summary, metadata blob, document date) into every
     /// chunk of one file. Null arguments are left untouched. No re-parse or re-embed is needed:
     /// the chunk vector comes from `text`, which metadata regeneration does not change.

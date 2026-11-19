@@ -277,6 +277,79 @@ public class ElasticClientImpl : IElasticClient
         }
     }
 
+    public async Task<long> UpdateFileTypesByFileIdAsync(
+        string indexName,
+        string fileId,
+        int fileType,
+        IReadOnlyCollection<int>? fileTypes,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileId) || !await IndexExistsAsync(indexName, ct))
+            return 0;
+
+        await EnsureVectorIndexMappingsAsync(indexName, ct);
+
+        var types = FileTypeSet(fileType, fileTypes);
+        var body = new
+        {
+            script = new
+            {
+                source = types is null
+                    ? "ctx._source.file_type = params.fileType; ctx._source.remove('file_types');"
+                    : "ctx._source.file_type = params.fileType; ctx._source.file_types = params.fileTypes;",
+                lang = "painless",
+                @params = new Dictionary<string, object?> { ["fileType"] = fileType, ["fileTypes"] = types }
+            },
+            query = new
+            {
+                term = new Dictionary<string, string>
+                {
+                    ["file_id"] = fileId
+                }
+            }
+        };
+
+        var path = new Elastic.Transport.EndpointPath(
+            Elastic.Transport.HttpMethod.POST,
+            $"/{Uri.EscapeDataString(indexName)}/_update_by_query?conflicts=proceed&refresh=true&timeout=5m&scroll_size=500");
+        var requestConfiguration = new Elastic.Transport.RequestConfiguration
+        {
+            RequestTimeout = FileTypeUpdateRequestTimeout,
+            MaxRetryTimeout = FileTypeUpdateRequestTimeout,
+            DisableDirectStreaming = true
+        };
+        var response = await _client.Transport.RequestAsync<Elastic.Transport.StringResponse>(
+            in path,
+            Elastic.Transport.PostData.String(JsonSerializer.Serialize(body)),
+            null, requestConfiguration, ct);
+
+        if (!response.ApiCallDetails.HasSuccessfulStatusCode)
+            throw new InvalidOperationException(
+                BuildFileTypeUpdateError(response, 1, indexName));
+
+        try
+        {
+            using var document = JsonDocument.Parse(response.Body);
+            return document.RootElement.TryGetProperty("updated", out var updated) && updated.TryGetInt64(out var value)
+                ? value
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// The value <c>file_types</c> holds: every type of the file, primary first, or null when the file
+    /// has only its primary type — an ordinary file carries no <c>file_types</c> at all.
+    /// </summary>
+    public static int[]? FileTypeSet(int fileType, IReadOnlyCollection<int>? fileTypes)
+    {
+        var all = new[] { fileType }.Concat(fileTypes ?? []).Distinct().ToArray();
+        return all.Length > 1 ? all : null;
+    }
+
     // Push regenerated metadata into a file's existing chunks. The chunk vector is computed from
     // `text`, which a metadata regeneration never touches, so the whole point here is that nothing
     // has to be re-parsed or re-embedded: only the scoring/filtering fields change. Mirrors
@@ -588,7 +661,8 @@ public class ElasticClientImpl : IElasticClient
         const string mappingJson = """
             {
               "properties": {
-                "file_type": { "type": "integer" }
+                "file_type": { "type": "integer" },
+                "file_types": { "type": "integer" }
               }
             }
             """;
@@ -633,9 +707,14 @@ public class ElasticClientImpl : IElasticClient
             .ToArray();
         if (normalizedFileTypes is { Length: > 0 })
         {
+            // A file with more than one type lists them all in `file_types` (absent on an ordinary
+            // file), so it is found by a search for any of its types.
             var typeClauses = normalizedFileTypes
-                .Select<int, Action<QueryDescriptor<T>>>(type =>
-                    q => q.Term(new TermQuery(new Field("file_type")) { Value = type }))
+                .SelectMany<int, Action<QueryDescriptor<T>>>(type =>
+                [
+                    q => q.Term(new TermQuery(new Field("file_type")) { Value = type }),
+                    q => q.Term(new TermQuery(new Field("file_types")) { Value = type })
+                ])
                 .ToArray();
 
             filters.Add(q => q.Bool(b => b

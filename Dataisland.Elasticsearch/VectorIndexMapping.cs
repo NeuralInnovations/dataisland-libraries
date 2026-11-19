@@ -15,5 +15,6 @@ public static class VectorIndexMapping
         .Keyword("icd10_codes")
         .Keyword("document_date")
         .Integer("file_type")
+        .Integer("file_types")
         .DenseVector("embedding", EmbeddingDimensions);
 }

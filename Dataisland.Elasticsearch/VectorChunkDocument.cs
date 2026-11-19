@@ -39,4 +39,13 @@ public class VectorChunkDocument
 
     [JsonPropertyName("file_type")]
     public int? FileType { get; set; }
+
+    /// <summary>
+    /// Every type the file answers to, written only for a file that has more than one (a clinic document
+    /// that is both a protocol and a patient route). Null for an ordinary file, whose one type is
+    /// <see cref="FileType"/>. A type filter matches either field.
+    /// </summary>
+    [JsonPropertyName("file_types")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int[]? FileTypes { get; set; }
 }

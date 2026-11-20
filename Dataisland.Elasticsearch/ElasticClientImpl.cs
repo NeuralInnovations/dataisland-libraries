@@ -698,6 +698,12 @@ public class ElasticClientImpl : IElasticClient
     // OutOfMemoryException while serializing replies. The vector stays in the index; only the reply leaves it out.
     private static readonly SourceConfig SourceWithoutEmbedding = new(new SourceFilter { Excludes = new[] { "embedding" } });
 
+    // A passage read inside one file needs its text, not the document-level fields every chunk repeats: on production
+    // a МОЗ guideline carries a 92 209-character summary and metadata in each of its 286 chunks — 100 passages of it
+    // were 22.4 MB without the vector, and the search service failed with OutOfMemoryException serializing them.
+    private static readonly SourceConfig SourceOfPassages =
+        new(new SourceFilter { Excludes = new[] { "embedding", "metadata", "summary" } });
+
     private static SearchRequestDescriptor<T> WithPreference<T>(SearchRequestDescriptor<T> search, string? preference)
     {
         search = search.Source(SourceWithoutEmbedding);
@@ -799,6 +805,7 @@ public class ElasticClientImpl : IElasticClient
                 .Concat(query.Phrases.Select(p => $"{p.Text?.Trim()}^{p.Boost.ToString("R", CultureInfo.InvariantCulture)}"))
                 .Concat(query.Prefixes.Select(p => "prefix:" + p?.Trim().ToLowerInvariant())));
         var response = await _client.SearchAsync<T>(s => WithPreference(s, preference)
+            .Source(SourceOfPassages)
             .Index(string.Join(",", indices))
             .Size(Math.Max(1, size))
             .Query(q => q

@@ -692,8 +692,17 @@ public class ElasticClientImpl : IElasticClient
     private string? PreferenceFor(string kind, string[] indices, IEnumerable<string?> parts) =>
         _stablePreference ? StableSearchPreference.For(kind, indices, parts) : null;
 
-    private static SearchRequestDescriptor<T> WithPreference<T>(SearchRequestDescriptor<T> search, string? preference) =>
-        preference is null ? search : search.Preference(preference);
+    // 20.11: the hit-returning searches (KNN, metadata, keywords inside one file) never read the stored vector, yet it is
+    // 81% of every hit's _source — 1.6 MB of 1.9 MB for 100 passages of one file. Under the protocol-choice verdicts (≈14
+    // whole-file reads per case) the search service went from ~120 MiB to its 512 MiB limit and failed with
+    // OutOfMemoryException while serializing replies. The vector stays in the index; only the reply leaves it out.
+    private static readonly SourceConfig SourceWithoutEmbedding = new(new SourceFilter { Excludes = new[] { "embedding" } });
+
+    private static SearchRequestDescriptor<T> WithPreference<T>(SearchRequestDescriptor<T> search, string? preference)
+    {
+        search = search.Source(SourceWithoutEmbedding);
+        return preference is null ? search : search.Preference(preference);
+    }
 
     private static Action<QueryDescriptor<T>>[] BuildSearchFilters<T>(string? fileIdFilter, int[]? fileTypeFilters)
     {
